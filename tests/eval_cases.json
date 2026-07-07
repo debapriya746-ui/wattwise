@@ -1,0 +1,191 @@
+[
+  {
+    "id": "TC001",
+    "name": "location_denied",
+    "description": "Verify that when location permission is denied, the agent prompts for pincode entry.",
+    "state": {
+      "step": "ask_permission"
+    },
+    "user_input": {
+      "permission": false
+    },
+    "expected_next_step": "ask_pincode",
+    "expected_input_requirement": "pincode"
+  },
+  {
+    "id": "TC002",
+    "name": "pincode_fails",
+    "description": "Verify that when pincode resolution fails, the agent falls back to manual city and country entry.",
+    "state": {
+      "step": "ask_pincode"
+    },
+    "user_input": {
+      "pincode": "00000"
+    },
+    "expected_next_step": "ask_manual",
+    "expected_input_requirement": "manual_address"
+  },
+  {
+    "id": "TC003",
+    "name": "weather_api_fails",
+    "description": "Verify that when the weather API is unavailable, the orchestrator prompts for manual temperature input.",
+    "state": {
+      "step": "weather",
+      "collected_data": {
+        "city": "UnknownCity",
+        "country": "UnknownCountry"
+      }
+    },
+    "user_input": {},
+    "simulate_api_error": true,
+    "expected_prompt_keyword": "temperature manually",
+    "expected_input_requirement": "manual_weather_temp"
+  },
+  {
+    "id": "TC004",
+    "name": "rate_not_found",
+    "description": "Verify that when the location is not in the database and no default tariff exists, the agent prompts for manual rate entry.",
+    "state": {
+      "step": "ask_user_rate",
+      "city": "UnknownCity",
+      "country": "Atlantis"
+    },
+    "user_input": {
+      "manual": false
+    },
+    "expected_next_step": "force_manual",
+    "expected_input_requirement": "manual_rate"
+  },
+  {
+    "id": "TC005",
+    "name": "unrealistic_rate",
+    "description": "Verify that negative or zero rate values are rejected by the tariff validation logic.",
+    "state": {
+      "step": "force_manual",
+      "city": "Mumbai",
+      "country": "India"
+    },
+    "user_input": {
+      "rate": -1.5,
+      "fixed_charge": 0
+    },
+    "expected_error": "Invalid rate value",
+    "expected_input_requirement": "manual_rate"
+  },
+  {
+    "id": "TC006",
+    "name": "hot_day_cdd",
+    "description": "Verify that CDD adjustment scales AC usage upward on a hot day (95F avg temp).",
+    "state": {},
+    "weather_data": {
+      "temp": 95.0,
+      "temp_max": 100.0,
+      "temp_min": 90.0,
+      "cdd": 30.0,
+      "hdd": 0.0
+    },
+    "appliances": [
+      {
+        "appliance": "AC",
+        "watts": 1500,
+        "hours": 8,
+        "owned": true,
+        "confirmed": true
+      }
+    ],
+    "expected_daily_kwh_min": 19.0,
+    "expected_weather_adjusted": true
+  },
+  {
+    "id": "TC007",
+    "name": "cold_day_hdd",
+    "description": "Verify that HDD adjustment scales Heater usage upward on a cold day (40F avg temp).",
+    "state": {},
+    "weather_data": {
+      "temp": 40.0,
+      "temp_max": 45.0,
+      "temp_min": 35.0,
+      "cdd": 0.0,
+      "hdd": 25.0
+    },
+    "appliances": [
+      {
+        "appliance": "Heater",
+        "watts": 2000,
+        "hours": 6,
+        "owned": true,
+        "confirmed": true
+      }
+    ],
+    "expected_daily_kwh_min": 21.0,
+    "expected_weather_adjusted": true
+  },
+  {
+    "id": "TC008",
+    "name": "over_budget",
+    "description": "Verify that calculator alerts when estimates are close to or exceed slab limits or standard ranges.",
+    "state": {},
+    "weather_data": {
+      "cdd": 0.0,
+      "hdd": 0.0
+    },
+    "tariff_data": {
+      "rate": 8.0,
+      "fixed_charge": 50,
+      "slab_based": true,
+      "slabs": [
+        {"limit": 100, "rate": 5.0},
+        {"limit": 300, "rate": 8.0},
+        {"limit": null, "rate": 12.0}
+      ]
+    },
+    "appliances": [
+      {
+        "appliance": "AC",
+        "watts": 1500,
+        "hours": 6.5,
+        "owned": true,
+        "confirmed": true
+      }
+    ],
+    "expected_monthly_kwh": 292.5,
+    "expected_slab_boundary_alert": true
+  },
+  {
+    "id": "TC009",
+    "name": "actual_kwh_feedback",
+    "description": "Verify that submitting actual kWh consumption calibrates future usage scaling factor directly.",
+    "state": {
+      "step": "ask_feedback",
+      "calculator_output": {
+        "total_monthly_kwh": 1000.0
+      }
+    },
+    "user_input": {
+      "feedback": {
+        "actual_kwh": 950.0
+      }
+    },
+    "expected_calibration_status": "CALIBRATED_KWH",
+    "expected_calibration_factor": 0.95
+  },
+  {
+    "id": "TC010",
+    "name": "actual_bill_only_feedback",
+    "description": "Verify that submitting actual bill cost updates cautiously with a note warning about unknown tax/fixed fees.",
+    "state": {
+      "step": "ask_feedback",
+      "calculator_output": {
+        "total_monthly_kwh": 1000.0,
+        "expected_bill": 5000.0
+      }
+    },
+    "user_input": {
+      "feedback": {
+        "actual_bill": 4800.0
+      }
+    },
+    "expected_calibration_status": "CALIBRATED_COST_CAUTIOUS",
+    "expected_note": "Difference may include unknown fees"
+  }
+]

@@ -1,0 +1,67 @@
+roles:
+  user:
+    allowed_actions:
+      - grant_location_permission
+      - deny_location_permission
+      - enter_pincode
+      - enter_city_manually
+      - confirm_assumptions
+      - edit_assumptions
+      - add_appliance
+      - confirm_appliance_ownership
+      - enter_electricity_rate
+      - enter_actual_bill
+      - delete_history
+
+blocked_actions:
+  - store_exact_gps
+  - store_exact_address
+  - share_data_externally
+  - calculate_before_verification
+  - show_single_exact_number
+
+data_privacy:
+  store_only:
+    - city
+    - country
+    - pincode
+    - date
+    - kwh_estimate
+    - bill_estimate
+    - budget_status
+  never_store:
+    - exact_gps_coordinates
+    - exact_address
+    - personal_identity
+  user_can_delete_history: true
+
+output_rules:
+  always_show_ranges: true
+  always_show_confidence: true
+  always_show_rate_source: true
+  always_show_formula: true
+  disclaimer: "WattWise provides rough estimates, 
+    not exact bill predictions."
+
+security:
+  sandbox_execution: true
+  human_approval_required_before: calculation
+  log_every_agent_decision: true
+
+fallback_rules:
+  weather_api_fails: ask_user_temperature
+  rate_not_found: ask_user_rate
+  pincode_fails: ask_city_country_manually
+  appliance_not_in_db: ask_user_wattage
+
+rate_priority:
+  - user_entered
+  - utility_state_average
+  - country_average
+  - ask_user
+
+confidence_levels:
+  high: user_confirmed_all_inputs
+  medium: some_inputs_assumed
+  low: rate_not_user_confirmed
+

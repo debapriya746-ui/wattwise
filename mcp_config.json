@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "appliance-db": {
+      "command": "python",
+      "args": ["mcp_server/appliance_db_server.py"]
+    }
+  }
+}
