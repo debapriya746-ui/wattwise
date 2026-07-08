@@ -27,13 +27,18 @@ def validate_pincode(pincode: str) -> bool:
     logger.info(f"Decision: Validated pincode '{clean_pin}'. Valid={is_valid}")
     return is_valid
 
-def auto_detect_location() -> dict:
+def auto_detect_location(client_ip: str = None) -> dict:
     """
     Auto-detects location via public IP-API.
+    Uses client_ip if provided to support cloud deployments.
     Discard coordinates immediately to enforce privacy.
     """
-    logger.info("Decision: Attempting auto-detection of location via IP Geolocation API.")
-    url = "http://ip-api.com/json/"
+    if client_ip:
+        logger.info(f"Decision: Attempting auto-detection for client IP '{client_ip}' via IP Geolocation API.")
+        url = f"http://ip-api.com/json/{client_ip}"
+    else:
+        logger.info("Decision: Attempting auto-detection of location via server public IP.")
+        url = "http://ip-api.com/json/"
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
             data = json.loads(response.read().decode())
@@ -89,7 +94,8 @@ def handle_permission_input(user_input: dict, state: dict) -> dict:
     granted = user_input.get("permission", False)
     if granted:
         logger.info("Decision: User granted location permission. Auto-detecting location.")
-        det = auto_detect_location()
+        client_ip = user_input.get("client_ip")
+        det = auto_detect_location(client_ip)
         if det["success"]:
             state["city"] = det["city"]
             state["country"] = det["country"]

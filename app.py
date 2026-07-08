@@ -168,7 +168,10 @@ if st.session_state.step == 1:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("📍 Auto-detect my location", use_container_width=True):
-            det = location_agent.auto_detect_location()
+            client_ip = st.context.headers.get("x-forwarded-for")
+            if client_ip:
+                client_ip = client_ip.split(",")[0].strip()
+            det = location_agent.auto_detect_location(client_ip)
             if det["success"]:
                 st.session_state.city = det["city"]
                 st.session_state.country = det["country"]
