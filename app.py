@@ -7,7 +7,7 @@ from agents import tariff_agent
 from agents import calculator_agent
 from agents import advisor_agent
 from agents import orchestrator
-from mcp_server import appliance_db_server
+from mcp_server import appliance_client
 
 # Page settings
 st.set_page_config(
@@ -422,7 +422,7 @@ elif st.session_state.step == 3:
             
             if st.button("Add to List", use_container_width=True):
                 # Call database server directly to fetch wattage
-                watts_res_str = appliance_db_server.get_appliance_wattage(
+                watts_res_str = appliance_client.get_appliance_wattage(
                     app_type, size_param, star_param, age_param
                 )
                 watts_res = json.loads(watts_res_str)
@@ -590,7 +590,7 @@ elif st.session_state.step == 4:
                 hours = render_hours_input("edit_standard")
                 
                 if st.button("Add to List", key="edit_add_btn", use_container_width=True):
-                    watts_res_str = appliance_db_server.get_appliance_wattage(app_type, size_param, star_param, age_param)
+                    watts_res_str = appliance_client.get_appliance_wattage(app_type, size_param, star_param, age_param)
                     watts_res = json.loads(watts_res_str)
                     watts = watts_res.get("watts_expected", 100)
                     
