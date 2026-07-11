@@ -109,6 +109,51 @@ CURRENCY_SYMBOLS = {
 def get_currency_symbol(curr_code):
     return CURRENCY_SYMBOLS.get(curr_code, "$")
 
+def render_hours_input(key_prefix: str) -> float:
+    """Renders the standard/custom appliance run pattern and duration inputs and returns calculated hours."""
+    run_pattern = st.selectbox(
+        "How does this appliance run?",
+        ["Fixed hours per day", "Continuously", "In short bursts", "Only during power cuts"],
+        key=f"{key_prefix}_run_pattern"
+    )
+    
+    final_hours = 0.0
+    
+    if run_pattern == "Continuously":
+        final_hours = 24.0
+    elif run_pattern == "In short bursts":
+        col_burst_1, col_burst_2 = st.columns(2)
+        with col_burst_1:
+            times = st.number_input("How many times per day?", min_value=1, value=3, step=1, key=f"{key_prefix}_times")
+        with col_burst_2:
+            burst_dur = st.number_input("How long each time?", min_value=0.1, value=15.0, step=1.0, key=f"{key_prefix}_burst_dur")
+        unit = st.selectbox("Unit", ["Minutes", "Hours", "All day (24 hours)"], key=f"{key_prefix}_burst_unit")
+        
+        if unit == "Minutes":
+            final_hours = (times * burst_dur) / 60.0
+        elif unit == "All day (24 hours)":
+            final_hours = 24.0
+        else:
+            final_hours = times * burst_dur
+    else:
+        if run_pattern == "Only during power cuts":
+            st.info("Please enter average hours of battery usage per day.")
+        
+        col_h1, col_h2 = st.columns([2, 1])
+        with col_h1:
+            dur_val = st.number_input("Usage duration", min_value=0.1, value=4.0, step=0.5, key=f"{key_prefix}_dur_val")
+        with col_h2:
+            unit = st.selectbox("Unit", ["Hours", "Minutes", "All day (24 hours)"], key=f"{key_prefix}_dur_unit")
+        
+        if unit == "Minutes":
+            final_hours = dur_val / 60.0
+        elif unit == "All day (24 hours)":
+            final_hours = 24.0
+        else:
+            final_hours = dur_val
+            
+    return min(24.0, max(0.0, final_hours))
+
 def draw_progress_bar(step):
     steps = ["Location", "Profile", "Usage", "Verify", "Estimate", "Tips"]
     cols = st.columns(6)
@@ -373,7 +418,7 @@ elif st.session_state.step == 3:
             elif app_type == "Lights":
                 size_param = st.selectbox("Bulb Type", ["LED", "CFL", "Incandescent"])
                 
-            hours = st.slider("Daily Usage (Hours)", min_value=0.5, max_value=24.0, value=4.0, step=0.5)
+            hours = render_hours_input("detailed_standard")
             
             if st.button("Add to List", use_container_width=True):
                 # Call database server directly to fetch wattage
@@ -394,8 +439,41 @@ elif st.session_state.step == 3:
                     "confirmed": True
                 }
                 st.session_state.appliances.append(new_app)
-                st.success(f"Added {app_type} ({watts}W) for {hours} hours daily.")
+                st.success(f"Added {app_type} ({watts}W) for {hours:.2f} hours daily.")
                 st.rerun()
+
+        # Add custom appliance form
+        with st.expander("➕ Add Custom Appliance", expanded=False):
+            cust_name = st.text_input("Appliance Name", key="detailed_cust_name")
+            cust_watts = st.number_input("Wattage in Watts", min_value=1.0, max_value=10000.0, value=100.0, step=10.0, key="detailed_cust_watts")
+            if cust_watts > 5000.0:
+                st.warning("This wattage seems high. Please double check your appliance label.")
+            weather_type = st.selectbox(
+                "Is this a heating or cooling appliance?",
+                ["None", "Cooling", "Heating"],
+                key="detailed_cust_weather"
+            )
+            cust_hours = render_hours_input("detailed_cust")
+            
+            if st.button("Add Custom to List", key="detailed_cust_add_btn", use_container_width=True):
+                if not cust_name.strip():
+                    st.error("Please enter a name for the custom appliance.")
+                else:
+                    new_app = {
+                        "appliance": cust_name.strip(),
+                        "watts": float(cust_watts),
+                        "hours": cust_hours,
+                        "star_rating": 3,
+                        "age": "",
+                        "size": "",
+                        "is_custom": True,
+                        "weather_type": weather_type.lower(),
+                        "owned": True,
+                        "confirmed": True
+                    }
+                    st.session_state.appliances.append(new_app)
+                    st.success(f"Added Custom {cust_name.strip()} ({cust_watts}W) for {cust_hours:.2f} hours daily.")
+                    st.rerun()
 
         # Display added appliances list
         if st.session_state.appliances:
@@ -403,10 +481,14 @@ elif st.session_state.step == 3:
             for idx, app in enumerate(st.session_state.appliances):
                 col_c, col_d = st.columns([4, 1])
                 with col_c:
-                    desc = f"{app['appliance']}"
-                    if app['size']:
-                        desc += f" ({app['size']})"
-                    desc += f" — {app['watts']}W | {app['hours']} hrs/day"
+                    if app.get("is_custom"):
+                        badge = "<span class='badge-info' style='margin-right:8px;'>Custom</span>"
+                        desc = f"{badge} <b>{app['appliance']}</b> — {app['watts']}W | {app['hours']:.2f} hrs/day"
+                    else:
+                        desc = f"{app['appliance']}"
+                        if app['size']:
+                            desc += f" ({app['size']})"
+                        desc += f" — {app['watts']}W | {app['hours']:.2f} hrs/day"
                     st.markdown(f"<div class='card-container' style='padding:12px 18px; margin-bottom:8px;'>{desc}</div>", unsafe_allow_html=True)
                 with col_d:
                     if st.button("Remove", key=f"del_{idx}", use_container_width=True):
@@ -505,7 +587,7 @@ elif st.session_state.step == 4:
                 elif app_type == "Lights":
                     size_param = st.selectbox("Bulb Type", ["LED", "CFL", "Incandescent"], key="edit_light_type")
                     
-                hours = st.slider("Daily Usage (Hours)", min_value=0.5, max_value=24.0, value=4.0, step=0.5, key="edit_app_hours")
+                hours = render_hours_input("edit_standard")
                 
                 if st.button("Add to List", key="edit_add_btn", use_container_width=True):
                     watts_res_str = appliance_db_server.get_appliance_wattage(app_type, size_param, star_param, age_param)
@@ -523,18 +605,55 @@ elif st.session_state.step == 4:
                         "confirmed": True
                     }
                     st.session_state.appliances.append(new_app)
-                    st.success(f"Added {app_type} ({watts}W) for {hours} hours daily.")
+                    st.success(f"Added {app_type} ({watts}W) for {hours:.2f} hours daily.")
                     st.rerun()
+
+            # Add custom appliance form
+            with st.expander("➕ Add Custom Appliance", expanded=False):
+                cust_name = st.text_input("Appliance Name", key="edit_cust_name")
+                cust_watts = st.number_input("Wattage in Watts", min_value=1.0, max_value=10000.0, value=100.0, step=10.0, key="edit_cust_watts")
+                if cust_watts > 5000.0:
+                    st.warning("This wattage seems high. Please double check your appliance label.")
+                weather_type = st.selectbox(
+                    "Is this a heating or cooling appliance?",
+                    ["None", "Cooling", "Heating"],
+                    key="edit_cust_weather"
+                )
+                cust_hours = render_hours_input("edit_cust")
+                
+                if st.button("Add Custom to List", key="edit_cust_add_btn", use_container_width=True):
+                    if not cust_name.strip():
+                        st.error("Please enter a name for the custom appliance.")
+                    else:
+                        new_app = {
+                            "appliance": cust_name.strip(),
+                            "watts": float(cust_watts),
+                            "hours": cust_hours,
+                            "star_rating": 3,
+                            "age": "",
+                            "size": "",
+                            "is_custom": True,
+                            "weather_type": weather_type.lower(),
+                            "owned": True,
+                            "confirmed": True
+                        }
+                        st.session_state.appliances.append(new_app)
+                        st.success(f"Added Custom {cust_name.strip()} ({cust_watts}W) for {cust_hours:.2f} hours daily.")
+                        st.rerun()
             
             if st.session_state.appliances:
                 st.write("##### Current Appliance List:")
                 for idx, app in enumerate(st.session_state.appliances):
                     col_c, col_d = st.columns([4, 1])
                     with col_c:
-                        desc = f"{app['appliance']}"
-                        if app['size']:
-                            desc += f" ({app['size']})"
-                        desc += f" — {app['watts']}W | {app['hours']} hrs/day"
+                        if app.get("is_custom"):
+                            badge = "<span class='badge-info' style='margin-right:8px;'>Custom</span>"
+                            desc = f"{badge} <b>{app['appliance']}</b> — {app['watts']}W | {app['hours']:.2f} hrs/day"
+                        else:
+                            desc = f"{app['appliance']}"
+                            if app['size']:
+                                desc += f" ({app['size']})"
+                            desc += f" — {app['watts']}W | {app['hours']:.2f} hrs/day"
                         st.markdown(f"<div class='card-container' style='padding:8px 15px; margin-bottom:5px; border-radius:8px;'>{desc}</div>", unsafe_allow_html=True)
                     with col_d:
                         if st.button("Remove", key=f"edit_del_{idx}", use_container_width=True):
@@ -605,6 +724,8 @@ elif st.session_state.step == 4:
         # 2. Weather
         st.markdown("**Local Climate:**")
         st.write(f"Temp: {st.session_state.weather.get('temp')}°F ({st.session_state.weather.get('condition')}) | CDD: {st.session_state.weather.get('cdd')} | HDD: {st.session_state.weather.get('hdd')}")
+        if st.session_state.weather.get("note"):
+            st.info(st.session_state.weather.get("note"))
         
         # 3. Tariff
         st.markdown("**Electricity Rate:**")

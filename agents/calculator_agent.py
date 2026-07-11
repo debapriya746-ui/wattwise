@@ -30,12 +30,15 @@ def calculate_appliance_usage(appliance: dict, weather: dict) -> dict:
         hdd = float(weather.get("hdd", 0.0))
         
         # Applies CDD/HDD adjustment only for sensitive appliances
-        if any(k in name for k in WEATHER_SENSITIVE_COOLING):
+        is_cooling = any(k in name for k in WEATHER_SENSITIVE_COOLING) or (appliance.get("weather_type") == "cooling")
+        is_heating = any(k in name for k in WEATHER_SENSITIVE_HEATING) or (appliance.get("weather_type") == "heating")
+        
+        if is_cooling:
             if cdd > 0:
                 adjusted_hours = hours * (1.0 + 0.03 * cdd)
                 weather_adjusted = True
                 logger.info(f"Decision: Applied CDD adjustment of {cdd} to {appliance.get('appliance')}. Hours: {hours} -> {adjusted_hours:.2f}")
-        elif any(k in name for k in WEATHER_SENSITIVE_HEATING):
+        elif is_heating:
             if hdd > 0:
                 adjusted_hours = hours * (1.0 + 0.03 * hdd)
                 weather_adjusted = True

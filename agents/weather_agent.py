@@ -119,6 +119,104 @@ def calculate_degree_days(temp_min_c: float, temp_max_c: float) -> dict:
         "hdd": round(hdd, 2)
     }
 
+CAPITALS = {
+    "United States": "Washington, D.C.",
+    "India": "New Delhi",
+    "United Kingdom": "London",
+    "Germany": "Berlin",
+    "France": "Paris",
+    "Canada": "Ottawa",
+    "Australia": "Canberra",
+    "Japan": "Tokyo",
+    "China": "Beijing",
+    "Brazil": "Brasilia",
+    "South Africa": "Pretoria",
+    "Russia": "Moscow",
+    "Italy": "Rome",
+    "Spain": "Madrid",
+    "Mexico": "Mexico City",
+    "Singapore": "Singapore",
+    "Malaysia": "Kuala Lumpur",
+    "Indonesia": "Jakarta",
+    "Philippines": "Manila",
+    "Thailand": "Bangkok",
+    "Vietnam": "Hanoi",
+    "South Korea": "Seoul",
+    "Netherlands": "Amsterdam",
+    "Belgium": "Brussels",
+    "Switzerland": "Bern",
+    "Sweden": "Stockholm",
+    "Norway": "Oslo",
+    "Denmark": "Copenhagen",
+    "Finland": "Helsinki",
+    "Poland": "Warsaw",
+    "Austria": "Vienna",
+    "New Zealand": "Wellington",
+    "Ireland": "Dublin",
+    "Portugal": "Lisbon",
+    "Greece": "Athens",
+    "Turkey": "Ankara",
+    "Egypt": "Cairo",
+    "Saudi Arabia": "Riyadh",
+    "UAE": "Abu Dhabi",
+    "United Arab Emirates": "Abu Dhabi",
+    "Argentina": "Buenos Aires",
+    "Colombia": "Bogota",
+    "Chile": "Santiago",
+    "Peru": "Lima"
+}
+
+def resolve_parent_divisions(city: str, country: str) -> dict:
+    """Queries Nominatim to resolve parent administrative divisions (district/county, state/province)."""
+    logger.info(f"Decision: Querying Nominatim for address details of '{city}, {country}'")
+    query = f"{city}, {country}"
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://nominatim.openstreetmap.org/search?q={encoded_query}&format=json&addressdetails=1&limit=1"
+    
+    res = {"district": None, "state": None}
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "WattWise-App/1.0 (contact: admin@wattwise.local)"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read().decode())
+            if data:
+                address = data[0].get("address", {})
+                res["district"] = address.get("county") or address.get("district") or address.get("state_district")
+                res["state"] = address.get("state") or address.get("province") or address.get("region")
+                logger.info(f"Decision: Nominatim resolved parent divisions: district={res['district']}, state={res['state']}")
+    except Exception as e:
+        logger.warning(f"Decision: Nominatim lookup failed: {str(e)}")
+        parts = [p.strip() for p in city.split(",")]
+        if len(parts) > 1:
+            res["district"] = parts[-2]
+            res["state"] = parts[-1]
+            
+    return res
+
+def geocode_with_fallbacks(city: str, country: str) -> tuple:
+    """Executes the geocoding fallback chain and returns (geo_res, actual_location, is_fallback)."""
+    divisions = resolve_parent_divisions(city, country)
+    district = divisions["district"]
+    state_prov = divisions["state"]
+    capital = CAPITALS.get(country)
+    
+    fallback_chain = [{"name": city, "query_city": city, "type": "exact"}]
+    if district:
+        fallback_chain.append({"name": district, "query_city": district, "type": "district"})
+    if state_prov:
+        fallback_chain.append({"name": state_prov, "query_city": state_prov, "type": "state"})
+    if capital:
+        fallback_chain.append({"name": capital, "query_city": capital, "type": "capital"})
+    fallback_chain.append({"name": country, "query_city": country, "type": "country"})
+    
+    for attempt in fallback_chain:
+        logger.info(f"Decision: Attempting geocoding for {attempt['type']}: '{attempt['name']}, {country}'")
+        geo_res = geocode_city(attempt["query_city"], country)
+        if geo_res.get("success"):
+            logger.info(f"Decision: Weather fetching will use location: '{attempt['name']}' (type: {attempt['type']})")
+            return geo_res, attempt["name"], (attempt["type"] != "exact")
+            
+    return {"success": False, "error": "Location not found"}, None, False
+
 def get_weather(city: str, country: str) -> str:
     """
     Retrieves weather details, converts to Fahrenheit, calculates CDD and HDD.
@@ -127,13 +225,12 @@ def get_weather(city: str, country: str) -> str:
     """
     logger.info(f"Decision: Weather Agent request received for city='{city}', country='{country}'")
     
-    # Geolocate
-    geo_res = geocode_city(city, country)
+    geo_res, actual_location, is_fallback = geocode_with_fallbacks(city, country)
     if not geo_res.get("success"):
         fail_res = {
             "status": "FAIL",
             "fallback_required": True,
-            "message": f"Geocoding failed: {geo_res.get('error')}. Please enter temperature manually.",
+            "message": f"We could not find weather data for {city}, {country}. Please enter the name of the nearest big city for accurate weather data.",
             "error": geo_res.get("error")
         }
         return json.dumps(fail_res, indent=2)
@@ -141,21 +238,17 @@ def get_weather(city: str, country: str) -> str:
     lat = geo_res["lat"]
     lon = geo_res["lon"]
     
-    # Fetch weather
     weather_res = fetch_weather_raw(lat, lon)
     if not weather_res.get("success"):
         fail_res = {
             "status": "FAIL",
             "fallback_required": True,
-            "message": f"Weather fetch failed: {weather_res.get('error')}. Please enter temperature manually.",
+            "message": f"Weather fetch failed for nearest location {actual_location}: {weather_res.get('error')}. Please enter temperature manually.",
             "error": weather_res.get("error")
         }
         return json.dumps(fail_res, indent=2)
         
-    # Calculate degree days
     dd_res = calculate_degree_days(weather_res["temp_min_c"], weather_res["temp_max_c"])
-    
-    # Format and return output
     temp_f = weather_res["temp_c"] * 9/5 + 32
     feels_like_f = weather_res["feels_like_c"] * 9/5 + 32
     condition = map_weather_code(weather_res["weather_code"])
@@ -173,5 +266,9 @@ def get_weather(city: str, country: str) -> str:
         "source": "open_meteo"
     }
     
-    logger.info(f"Decision: Returned weather successfully for {city}. Source: open_meteo")
+    if is_fallback:
+        output["note"] = f"Weather data sourced from nearest available location: {actual_location}"
+        
+    logger.info(f"Decision: Returned weather successfully using '{actual_location}'. Fallback: {is_fallback}")
     return json.dumps(output, indent=2)
+
