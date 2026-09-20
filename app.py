@@ -1,13 +1,33 @@
 import streamlit as st
-import json
 import os
-from agents import location_agent
-from agents import weather_agent
-from agents import tariff_agent
-from agents import calculator_agent
-from agents import advisor_agent
-from agents import orchestrator
-from mcp_server import appliance_client
+import httpx
+
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8001")
+
+
+def api_post(path: str, json: dict | None = None) -> dict:
+    resp = httpx.post(f"{API_BASE_URL}{path}", json=json or {}, timeout=15.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_get(path: str) -> dict:
+    resp = httpx.get(f"{API_BASE_URL}{path}", timeout=15.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_patch(path: str, json: dict) -> dict:
+    resp = httpx.patch(f"{API_BASE_URL}{path}", json=json, timeout=15.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def api_delete(path: str) -> dict:
+    resp = httpx.delete(f"{API_BASE_URL}{path}", timeout=15.0)
+    resp.raise_for_status()
+    return resp.json()
+
 
 # Page settings
 st.set_page_config(
@@ -116,9 +136,9 @@ def render_hours_input(key_prefix: str) -> float:
         ["Fixed hours per day", "Continuously", "In short bursts", "Only during power cuts"],
         key=f"{key_prefix}_run_pattern"
     )
-    
+
     final_hours = 0.0
-    
+
     if run_pattern == "Continuously":
         final_hours = 24.0
     elif run_pattern == "In short bursts":
@@ -128,7 +148,7 @@ def render_hours_input(key_prefix: str) -> float:
         with col_burst_2:
             burst_dur = st.number_input("How long each time?", min_value=0.1, value=15.0, step=1.0, key=f"{key_prefix}_burst_dur")
         unit = st.selectbox("Unit", ["Minutes", "Hours", "All day (24 hours)"], key=f"{key_prefix}_burst_unit")
-        
+
         if unit == "Minutes":
             final_hours = (times * burst_dur) / 60.0
         elif unit == "All day (24 hours)":
@@ -138,20 +158,20 @@ def render_hours_input(key_prefix: str) -> float:
     else:
         if run_pattern == "Only during power cuts":
             st.info("Please enter average hours of battery usage per day.")
-        
+
         col_h1, col_h2 = st.columns([2, 1])
         with col_h1:
             dur_val = st.number_input("Usage duration", min_value=0.1, value=4.0, step=0.5, key=f"{key_prefix}_dur_val")
         with col_h2:
             unit = st.selectbox("Unit", ["Hours", "Minutes", "All day (24 hours)"], key=f"{key_prefix}_dur_unit")
-        
+
         if unit == "Minutes":
             final_hours = dur_val / 60.0
         elif unit == "All day (24 hours)":
             final_hours = 24.0
         else:
             final_hours = dur_val
-            
+
     return min(24.0, max(0.0, final_hours))
 
 def draw_progress_bar(step):
@@ -168,6 +188,8 @@ def draw_progress_bar(step):
     st.write("")
 
 # Initialize session state variables
+if "session_id" not in st.session_state:
+    st.session_state.session_id = api_post("/sessions")["session_id"]
 if "step" not in st.session_state:
     st.session_state.step = 1
 if "city" not in st.session_state:
@@ -199,6 +221,8 @@ if "calculation_results" not in st.session_state:
 if "feedback_status" not in st.session_state:
     st.session_state.feedback_status = None
 
+sid = st.session_state.session_id
+
 # Header
 st.markdown("<h2 style='text-align: center; margin-bottom: 0px;'>⚡ WattWise</h2>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #718096; margin-bottom: 25px;'>Your personal electricity bill estimator</p>", unsafe_allow_html=True)
@@ -209,14 +233,14 @@ if st.session_state.step == 1:
     st.markdown("<div class='card-container'>", unsafe_allow_html=True)
     st.markdown("<div class='card-title'>Where are you located?</div>", unsafe_allow_html=True)
     st.write("We use your location to estimate weather-adjusted energy usage and find your local electricity tariff rate.")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("📍 Auto-detect my location", use_container_width=True):
             client_ip = st.context.headers.get("x-forwarded-for")
             if client_ip:
                 client_ip = client_ip.split(",")[0].strip()
-            det = location_agent.auto_detect_location(client_ip)
+            det = api_post(f"/sessions/{sid}/location/auto-detect", {"client_ip": client_ip})
             if det["success"]:
                 st.session_state.city = det["city"]
                 st.session_state.country = det["country"]
@@ -226,25 +250,24 @@ if st.session_state.step == 1:
                 st.rerun()
             else:
                 st.error("Auto-detect failed. Please enter pincode below.")
-                
+
     with col2:
         pin = st.text_input("Or enter pincode manually", placeholder="e.g. 94043")
         if st.button("Find Location", use_container_width=True):
-            if location_agent.validate_pincode(pin):
-                res = location_agent.resolve_pincode_api(pin)
-                if res["success"]:
-                    st.session_state.city = res["city"]
-                    st.session_state.country = res["country"]
-                    st.session_state.pincode = pin
-                    st.session_state.location_resolved = True
-                    st.session_state.location_resolved_failed = False
-                    st.rerun()
-                else:
-                    st.session_state.location_resolved_failed = True
-                    st.rerun()
-            else:
+            res = api_post(f"/sessions/{sid}/location/pincode", {"pincode": pin})
+            if res.get("error") == "invalid_format":
                 st.error("Invalid pincode format.")
-                
+            elif res["success"]:
+                st.session_state.city = res["city"]
+                st.session_state.country = res["country"]
+                st.session_state.pincode = pin
+                st.session_state.location_resolved = True
+                st.session_state.location_resolved_failed = False
+                st.rerun()
+            else:
+                st.session_state.location_resolved_failed = True
+                st.rerun()
+
     if st.session_state.location_resolved_failed:
         st.markdown("<hr style='margin: 15px 0;'>", unsafe_allow_html=True)
         st.markdown("Pincode could not be resolved. Please enter your location details:")
@@ -252,17 +275,18 @@ if st.session_state.step == 1:
         m_country = st.text_input("Country")
         if st.button("Confirm Manual Location", use_container_width=True):
             if m_city and m_country:
-                st.session_state.city = m_city
-                st.session_state.country = m_country
+                res = api_post(f"/sessions/{sid}/location/manual", {"city": m_city, "country": m_country})
+                st.session_state.city = res["city"]
+                st.session_state.country = res["country"]
                 st.session_state.pincode = ""
                 st.session_state.location_resolved = True
                 st.session_state.location_resolved_failed = False
                 st.rerun()
-                
+
     if st.session_state.location_resolved:
         st.markdown("<hr style='margin: 15px 0;'>", unsafe_allow_html=True)
         st.write("Please review and correct the resolved location details below if necessary:")
-        
+
         col_c_edit, col_co_edit, col_p_edit = st.columns(3)
         with col_c_edit:
             confirmed_city = st.text_input("City", value=st.session_state.city, key="step1_edit_city")
@@ -270,49 +294,21 @@ if st.session_state.step == 1:
             confirmed_country = st.text_input("Country", value=st.session_state.country, key="step1_edit_country")
         with col_p_edit:
             confirmed_pincode = st.text_input("Pincode (Optional)", value=st.session_state.pincode, key="step1_edit_pincode")
-            
+
         c1, c2 = st.columns(2)
         with c1:
             if st.button("Confirm & Continue", use_container_width=True):
-                st.session_state.city = confirmed_city
-                st.session_state.country = confirmed_country
-                st.session_state.pincode = confirmed_pincode
-                
                 with st.spinner("Fetching weather and tariff rates..."):
-                    # Call weather agent
-                    w_res_str = weather_agent.get_weather(st.session_state.city, st.session_state.country)
-                    w_res = json.loads(w_res_str)
-                    if w_res["status"] in ["SUCCESS", "FALLBACK"]:
-                        st.session_state.weather = w_res
-                    else:
-                        st.session_state.weather = {
-                            "temp": 72.0, "temp_min": 65.0, "temp_max": 79.0,
-                            "humidity": 50, "feels_like": 72.0, "cdd": 5.0, "hdd": 0.0,
-                            "condition": "Clear", "source": "fallback", "status": "FALLBACK"
-                        }
-                    
-                    # Call tariff agent
-                    t_res = tariff_agent.lookup_tariff_db(st.session_state.city, st.session_state.country)
-                    if t_res["found"]:
-                        st.session_state.tariff = {
-                            "rate": t_res["data"]["rate"],
-                            "rate_source": t_res["source"],
-                            "fixed_charge": t_res["data"]["fixed_charge"],
-                            "slab_based": t_res["data"]["slab_based"],
-                            "slabs": t_res["data"]["slabs"],
-                            "currency": t_res["currency"],
-                            "confidence": "high" if t_res["source"] == "state_average" else "medium"
-                        }
-                    else:
-                        st.session_state.tariff = {
-                            "rate": 0.15,
-                            "rate_source": "country_average",
-                            "fixed_charge": 0.0,
-                            "slab_based": False,
-                            "slabs": [],
-                            "currency": "USD",
-                            "confidence": "low"
-                        }
+                    res = api_post(f"/sessions/{sid}/location/confirm", {
+                        "city": confirmed_city,
+                        "country": confirmed_country,
+                        "pincode": confirmed_pincode,
+                    })
+                    st.session_state.city = confirmed_city
+                    st.session_state.country = confirmed_country
+                    st.session_state.pincode = confirmed_pincode
+                    st.session_state.weather = res["weather"]
+                    st.session_state.tariff = res["tariff"]
                 st.session_state.step = 2
                 st.rerun()
         with c2:
@@ -320,7 +316,7 @@ if st.session_state.step == 1:
                 st.session_state.location_resolved = False
                 st.session_state.location_resolved_failed = False
                 st.rerun()
-                
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------- STEP 2: Home Profile -----------------
@@ -328,7 +324,7 @@ elif st.session_state.step == 2:
     draw_progress_bar(2)
     st.markdown("<div class='card-container'>", unsafe_allow_html=True)
     st.markdown("<div class='card-title'>Tell us about your home</div>", unsafe_allow_html=True)
-    
+
     home_type = st.selectbox(
         "What best describes your home?",
         ["Apartment", "House", "Villa"],
@@ -345,11 +341,12 @@ elif st.session_state.step == 2:
         index=["Quick Mode", "Detailed Mode"].index(st.session_state.mode),
         help="Quick Mode calculates based on home averages. Detailed Mode allows you to add custom appliances."
     )
-    
+
     if st.button("Next Step", use_container_width=True):
         st.session_state.home_type = home_type
         st.session_state.members = members
         st.session_state.mode = mode
+        api_post(f"/sessions/{sid}/profile", {"home_type": home_type, "members": members, "mode": mode})
         st.session_state.step = 3
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -357,7 +354,7 @@ elif st.session_state.step == 2:
 # ----------------- STEP 3: Appliance / Usage Inputs -----------------
 elif st.session_state.step == 3:
     draw_progress_bar(3)
-    
+
     if st.session_state.mode == "Quick Mode":
         st.markdown("<div class='card-container'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Appliance Usage Level</div>", unsafe_allow_html=True)
@@ -368,34 +365,28 @@ elif st.session_state.step == 3:
         )
         if st.button("Generate Estimate Summary", use_container_width=True):
             st.session_state.usage_level = usage
-            m_val = 5 if st.session_state.members == "5+" else int(st.session_state.members)
-            # Generate default appliances list
-            apps = orchestrator.generate_quick_mode_appliances(
-                st.session_state.home_type,
-                m_val,
-                usage
-            )
-            st.session_state.appliances = apps
+            res = api_post(f"/sessions/{sid}/appliances/quick", {"usage_level": usage})
+            st.session_state.appliances = res["appliances"]
             st.session_state.step = 4
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
-        
+
     else:
         # Detailed Mode - Appliance builder
         st.subheader("Add your appliances")
-        
+
         # Add new appliance form
         with st.expander("➕ Add an Appliance", expanded=len(st.session_state.appliances) == 0):
             app_type = st.selectbox(
                 "Appliance Type",
                 ["AC", "Fridge", "Washing machine", "TV", "Fan", "Water heater", "Microwave", "Lights", "Laptop", "Desktop", "Iron"]
             )
-            
+
             # Contextual questions based on type
             size_param = None
             star_param = None
             age_param = None
-            
+
             if app_type == "AC":
                 size_param = st.selectbox("Tonnage", ["1 ton", "1.5 ton", "2 ton"])
                 star_param = st.selectbox("Star Rating", [1, 2, 3, 4, 5], index=2)
@@ -417,29 +408,16 @@ elif st.session_state.step == 3:
                 size_param = st.selectbox("Type", ["solo", "grill", "convection"])
             elif app_type == "Lights":
                 size_param = st.selectbox("Bulb Type", ["LED", "CFL", "Incandescent"])
-                
+
             hours = render_hours_input("detailed_standard")
-            
+
             if st.button("Add to List", use_container_width=True):
-                # Call database server directly to fetch wattage
-                watts_res_str = appliance_client.get_appliance_wattage(
-                    app_type, size_param, star_param, age_param
-                )
-                watts_res = json.loads(watts_res_str)
-                watts = watts_res.get("watts_expected", 100)
-                
-                new_app = {
-                    "appliance": app_type,
-                    "watts": watts,
-                    "hours": hours,
-                    "star_rating": star_param if star_param else 3,
-                    "age": age_param if age_param else "",
-                    "size": size_param if size_param else "",
-                    "owned": True,
-                    "confirmed": True
-                }
-                st.session_state.appliances.append(new_app)
-                st.success(f"Added {app_type} ({watts}W) for {hours:.2f} hours daily.")
+                res = api_post(f"/sessions/{sid}/appliances", {
+                    "appliance": app_type, "size": size_param, "star_rating": star_param,
+                    "age": age_param, "hours": hours,
+                })
+                st.session_state.appliances = res["appliances"]
+                st.success(f"Added {app_type} ({res['appliance']['watts']}W) for {hours:.2f} hours daily.")
                 st.rerun()
 
         # Add custom appliance form
@@ -454,24 +432,16 @@ elif st.session_state.step == 3:
                 key="detailed_cust_weather"
             )
             cust_hours = render_hours_input("detailed_cust")
-            
+
             if st.button("Add Custom to List", key="detailed_cust_add_btn", use_container_width=True):
                 if not cust_name.strip():
                     st.error("Please enter a name for the custom appliance.")
                 else:
-                    new_app = {
-                        "appliance": cust_name.strip(),
-                        "watts": float(cust_watts),
-                        "hours": cust_hours,
-                        "star_rating": 3,
-                        "age": "",
-                        "size": "",
-                        "is_custom": True,
-                        "weather_type": weather_type.lower(),
-                        "owned": True,
-                        "confirmed": True
-                    }
-                    st.session_state.appliances.append(new_app)
+                    res = api_post(f"/sessions/{sid}/appliances/custom", {
+                        "name": cust_name.strip(), "watts": float(cust_watts),
+                        "hours": cust_hours, "weather_type": weather_type,
+                    })
+                    st.session_state.appliances = res["appliances"]
                     st.success(f"Added Custom {cust_name.strip()} ({cust_watts}W) for {cust_hours:.2f} hours daily.")
                     st.rerun()
 
@@ -492,9 +462,10 @@ elif st.session_state.step == 3:
                     st.markdown(f"<div class='card-container' style='padding:12px 18px; margin-bottom:8px;'>{desc}</div>", unsafe_allow_html=True)
                 with col_d:
                     if st.button("Remove", key=f"del_{idx}", use_container_width=True):
-                        st.session_state.appliances.pop(idx)
+                        res = api_delete(f"/sessions/{sid}/appliances/{idx}")
+                        st.session_state.appliances = res["appliances"]
                         st.rerun()
-                        
+
             if st.button("Verify Details", use_container_width=True):
                 st.session_state.step = 4
                 st.rerun()
@@ -506,11 +477,11 @@ elif st.session_state.step == 4:
     draw_progress_bar(4)
     if "is_editing" not in st.session_state:
         st.session_state.is_editing = False
-        
+
     if st.session_state.is_editing:
         st.markdown("<div class='card-container'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>🔧 Edit Inputs</div>", unsafe_allow_html=True)
-        
+
         # 1. Location
         st.markdown("### 📍 Location Details")
         col_city, col_country, col_pin = st.columns(3)
@@ -520,7 +491,7 @@ elif st.session_state.step == 4:
             edit_country = st.text_input("Country", value=st.session_state.country)
         with col_pin:
             edit_pincode = st.text_input("Pincode", value=st.session_state.pincode)
-            
+
         # 2. Local Climate
         st.markdown("### 🌡️ Local Climate")
         col_temp, col_hum, col_cdd, col_hdd = st.columns(4)
@@ -532,7 +503,7 @@ elif st.session_state.step == 4:
             edit_cdd = st.number_input("Cooling Degree Days (CDD)", value=float(st.session_state.weather.get("cdd", 0.0)), step=0.5)
         with col_hdd:
             edit_hdd = st.number_input("Heating Degree Days (HDD)", value=float(st.session_state.weather.get("hdd", 0.0)), step=0.5)
-            
+
         # 3. Tariff
         st.markdown("### 💳 Electricity Tariff")
         col_rate, col_fixed = st.columns(2)
@@ -540,7 +511,7 @@ elif st.session_state.step == 4:
             edit_rate = st.number_input("Rate per kWh", value=float(st.session_state.tariff.get("rate", 0.15)), min_value=0.01, step=0.01)
         with col_fixed:
             edit_fixed = st.number_input("Fixed Monthly Charge", value=float(st.session_state.tariff.get("fixed_charge", 0.0)), min_value=0.0, step=1.0)
-            
+
         # 4. Mode-specific inputs
         st.markdown("### 🏠 Home & Appliances Profile")
         if st.session_state.mode == "Quick Mode":
@@ -560,11 +531,11 @@ elif st.session_state.step == 4:
                     ["AC", "Fridge", "Washing machine", "TV", "Fan", "Water heater", "Microwave", "Lights", "Laptop", "Desktop", "Iron"],
                     key="edit_builder_type"
                 )
-                
+
                 size_param = None
                 star_param = None
                 age_param = None
-                
+
                 if app_type == "AC":
                     size_param = st.selectbox("Tonnage", ["1 ton", "1.5 ton", "2 ton"], key="edit_ac_ton")
                     star_param = st.selectbox("Star Rating", [1, 2, 3, 4, 5], index=2, key="edit_ac_star")
@@ -586,26 +557,16 @@ elif st.session_state.step == 4:
                     size_param = st.selectbox("Type", ["solo", "grill", "convection"], key="edit_mw_type")
                 elif app_type == "Lights":
                     size_param = st.selectbox("Bulb Type", ["LED", "CFL", "Incandescent"], key="edit_light_type")
-                    
+
                 hours = render_hours_input("edit_standard")
-                
+
                 if st.button("Add to List", key="edit_add_btn", use_container_width=True):
-                    watts_res_str = appliance_client.get_appliance_wattage(app_type, size_param, star_param, age_param)
-                    watts_res = json.loads(watts_res_str)
-                    watts = watts_res.get("watts_expected", 100)
-                    
-                    new_app = {
-                        "appliance": app_type,
-                        "watts": watts,
-                        "hours": hours,
-                        "star_rating": star_param if star_param else 3,
-                        "age": age_param if age_param else "",
-                        "size": size_param if size_param else "",
-                        "owned": True,
-                        "confirmed": True
-                    }
-                    st.session_state.appliances.append(new_app)
-                    st.success(f"Added {app_type} ({watts}W) for {hours:.2f} hours daily.")
+                    res = api_post(f"/sessions/{sid}/appliances", {
+                        "appliance": app_type, "size": size_param, "star_rating": star_param,
+                        "age": age_param, "hours": hours,
+                    })
+                    st.session_state.appliances = res["appliances"]
+                    st.success(f"Added {app_type} ({res['appliance']['watts']}W) for {hours:.2f} hours daily.")
                     st.rerun()
 
             # Add custom appliance form
@@ -620,27 +581,19 @@ elif st.session_state.step == 4:
                     key="edit_cust_weather"
                 )
                 cust_hours = render_hours_input("edit_cust")
-                
+
                 if st.button("Add Custom to List", key="edit_cust_add_btn", use_container_width=True):
                     if not cust_name.strip():
                         st.error("Please enter a name for the custom appliance.")
                     else:
-                        new_app = {
-                            "appliance": cust_name.strip(),
-                            "watts": float(cust_watts),
-                            "hours": cust_hours,
-                            "star_rating": 3,
-                            "age": "",
-                            "size": "",
-                            "is_custom": True,
-                            "weather_type": weather_type.lower(),
-                            "owned": True,
-                            "confirmed": True
-                        }
-                        st.session_state.appliances.append(new_app)
+                        res = api_post(f"/sessions/{sid}/appliances/custom", {
+                            "name": cust_name.strip(), "watts": float(cust_watts),
+                            "hours": cust_hours, "weather_type": weather_type,
+                        })
+                        st.session_state.appliances = res["appliances"]
                         st.success(f"Added Custom {cust_name.strip()} ({cust_watts}W) for {cust_hours:.2f} hours daily.")
                         st.rerun()
-            
+
             if st.session_state.appliances:
                 st.write("##### Current Appliance List:")
                 for idx, app in enumerate(st.session_state.appliances):
@@ -657,82 +610,69 @@ elif st.session_state.step == 4:
                         st.markdown(f"<div class='card-container' style='padding:8px 15px; margin-bottom:5px; border-radius:8px;'>{desc}</div>", unsafe_allow_html=True)
                     with col_d:
                         if st.button("Remove", key=f"edit_del_{idx}", use_container_width=True):
-                            st.session_state.appliances.pop(idx)
+                            res = api_delete(f"/sessions/{sid}/appliances/{idx}")
+                            st.session_state.appliances = res["appliances"]
                             st.rerun()
 
         # Save or Cancel Buttons
         col_s, col_c = st.columns(2)
         with col_s:
             if st.button("Save & Estimate", use_container_width=True):
-                # 1. Update Location
-                st.session_state.city = edit_city
-                st.session_state.country = edit_country
-                st.session_state.pincode = edit_pincode
-                
-                # 2. Update Weather
-                st.session_state.weather["temp"] = edit_temp
-                st.session_state.weather["humidity"] = edit_humidity
-                st.session_state.weather["cdd"] = edit_cdd
-                st.session_state.weather["hdd"] = edit_hdd
-                
-                # 3. Update Tariff
-                st.session_state.tariff["rate"] = edit_rate
-                st.session_state.tariff["fixed_charge"] = edit_fixed
-                
-                # 4. Update Quick Mode
+                update_body = {
+                    "city": edit_city, "country": edit_country, "pincode": edit_pincode,
+                    "temp": edit_temp, "humidity": edit_humidity, "cdd": edit_cdd, "hdd": edit_hdd,
+                    "rate": edit_rate, "fixed_charge": edit_fixed,
+                }
                 if st.session_state.mode == "Quick Mode":
-                    st.session_state.home_type = edit_home_type
-                    st.session_state.members = edit_members
-                    st.session_state.usage_level = edit_usage_level
-                    
-                    m_val = 5 if edit_members == "5+" else int(edit_members)
-                    apps = orchestrator.generate_quick_mode_appliances(
-                        edit_home_type,
-                        m_val,
-                        edit_usage_level
-                    )
-                    st.session_state.appliances = apps
-                
+                    update_body.update({
+                        "home_type": edit_home_type, "members": edit_members, "usage_level": edit_usage_level,
+                    })
+                updated = api_patch(f"/sessions/{sid}", update_body)
+
+                st.session_state.city = updated["city"]
+                st.session_state.country = updated["country"]
+                st.session_state.pincode = updated["pincode"]
+                st.session_state.weather = updated["weather"]
+                st.session_state.tariff = updated["tariff"]
+                if st.session_state.mode == "Quick Mode":
+                    st.session_state.home_type = updated["home_type"]
+                    st.session_state.members = updated["members"]
+                    st.session_state.usage_level = updated["usage_level"]
+                    st.session_state.appliances = updated["appliances"]
+
                 st.session_state.is_editing = False
-                
-                # Run calculations
-                res_str = calculator_agent.calculate_bill(
-                    st.session_state.appliances,
-                    st.session_state.weather,
-                    st.session_state.tariff,
-                    assumptions_confirmed=True
-                )
-                st.session_state.calculation_results = json.loads(res_str)
+
+                st.session_state.calculation_results = api_post(f"/sessions/{sid}/calculate")
                 st.session_state.step = 5
                 st.rerun()
-                
+
         with col_c:
             if st.button("Cancel Edit", use_container_width=True):
                 st.session_state.is_editing = False
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
-        
+
     else:
         st.markdown("<div class='card-container'>", unsafe_allow_html=True)
         st.markdown("<div class='card-title'>Review your information</div>", unsafe_allow_html=True)
         st.write("Please confirm the assumptions and inputs resolved before we calculate your estimate:")
-        
+
         # 1. Location
         st.markdown("**Location:**")
         st.write(f"{st.session_state.city}, {st.session_state.country} {st.session_state.pincode}")
-        
+
         # 2. Weather
         st.markdown("**Local Climate:**")
         st.write(f"Temp: {st.session_state.weather.get('temp')}°F ({st.session_state.weather.get('condition')}) | CDD: {st.session_state.weather.get('cdd')} | HDD: {st.session_state.weather.get('hdd')}")
         if st.session_state.weather.get("note"):
             st.info(st.session_state.weather.get("note"))
-        
+
         # 3. Tariff
         st.markdown("**Electricity Rate:**")
         curr = get_currency_symbol(st.session_state.tariff.get("currency", "USD"))
         note = " (Fixed charge not included)" if st.session_state.tariff.get("fixed_charge") == 0 else ""
         st.write(f"{curr}{st.session_state.tariff.get('rate')}/kWh (Source: {st.session_state.tariff.get('rate_source').replace('_', ' ')}) | Fixed Charge: {curr}{st.session_state.tariff.get('fixed_charge')}{note}")
-        
+
         # 4. Appliances
         st.markdown("**Appliance Details:**")
         if st.session_state.appliances:
@@ -746,17 +686,11 @@ elif st.session_state.step == 4:
             st.table(app_data)
         else:
             st.info("No appliances added.")
-            
+
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Confirm & Estimate", use_container_width=True):
-                res_str = calculator_agent.calculate_bill(
-                    st.session_state.appliances,
-                    st.session_state.weather,
-                    st.session_state.tariff,
-                    assumptions_confirmed=True
-                )
-                st.session_state.calculation_results = json.loads(res_str)
+                st.session_state.calculation_results = api_post(f"/sessions/{sid}/calculate")
                 st.session_state.step = 5
                 st.rerun()
         with col2:
@@ -768,21 +702,21 @@ elif st.session_state.step == 4:
 # ----------------- STEP 5: Results Screen -----------------
 elif st.session_state.step == 5:
     draw_progress_bar(5)
-    
+
     res = st.session_state.calculation_results
     curr = get_currency_symbol(res.get("currency", "USD"))
-    
+
     st.markdown("<div class='estimate-box'>", unsafe_allow_html=True)
     st.markdown(f"<div class='badge-success'>{res.get('margin_explanation')}</div>", unsafe_allow_html=True)
     st.markdown("<div style='font-size: 1.1rem; color: #4a5568; font-weight: 500;'>Estimated Monthly Cost</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='estimate-val'>{curr}{int(res.get('total_expected'))}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='estimate-range'>Expected Range: {curr}{int(res.get('low_bill'))} – {curr}{int(res.get('high_bill'))}</div>", unsafe_allow_html=True)
-    
+
     rate_source = res.get("rate_source", "").replace("_", " ")
     st.markdown(f"<div style='font-size: 0.9rem; color: #718096; margin-top: 15px;'>Electricity Tariff Source: **{rate_source}**</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='disclaimer-text'>{res.get('disclaimer')}</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
-    
+
     if st.button("Show ways to reduce this bill", use_container_width=True):
         st.session_state.step = 6
         st.rerun()
@@ -790,19 +724,19 @@ elif st.session_state.step == 5:
 # ----------------- STEP 6: Saving Tips Screen -----------------
 elif st.session_state.step == 6:
     draw_progress_bar(6)
-    
+
     calc_res = st.session_state.calculation_results
     curr = get_currency_symbol(calc_res.get("currency", "USD"))
-    
+
     # Generate tips
-    tips_res = advisor_agent.generate_tips_list(calc_res, st.session_state.weather)
-    
+    tips_res = api_get(f"/sessions/{sid}/tips")
+
     st.subheader("💡 Personalized Saving Tips")
-    
+
     # Display slab boundary warning if any
     if tips_res.get("slab_boundary_alert"):
         st.warning(tips_res.get("slab_boundary_message"))
-        
+
     for tip in tips_res.get("tips", []):
         st.markdown(f"""
         <div class='card-container'>
@@ -817,36 +751,34 @@ elif st.session_state.step == 6:
             </div>
         </div>
         """, unsafe_allow_html=True)
-        
+
     # Feedback loop section
     st.markdown("<div class='card-container'>", unsafe_allow_html=True)
     st.markdown("<div class='card-title'>Help us improve future estimates</div>", unsafe_allow_html=True)
     st.write("How close was this estimate to your actual monthly bill?")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         act_bill = st.number_input("Enter actual bill amount:", min_value=0.0, step=10.0)
     with col2:
         act_kwh = st.number_input("Enter actual kWh used (Optional):", min_value=0.0, step=10.0)
-        
+
     if st.button("Submit Feedback", use_container_width=True):
-        f_input = {}
+        feedback_body = {}
         if act_kwh > 0:
-            f_input = {"feedback": {"actual_kwh": act_kwh}}
+            feedback_body = {"actual_kwh": act_kwh}
         elif act_bill > 0:
-            f_input = {"feedback": {"actual_bill": act_bill}}
-            
-        if f_input:
-            adv_state = {"step": "ask_feedback", "calculator_output": calc_res}
-            res_str = advisor_agent.process_step(adv_state, f_input)
-            res = json.loads(res_str)
+            feedback_body = {"actual_bill": act_bill}
+
+        if feedback_body:
+            res = api_post(f"/sessions/{sid}/feedback", feedback_body)
             st.session_state.feedback_status = res.get("message")
             st.rerun()
-            
+
     if st.session_state.feedback_status:
         st.success(st.session_state.feedback_status)
     st.markdown("</div>", unsafe_allow_html=True)
-    
+
     if st.button("Start Over", use_container_width=True):
         # Clear all session states
         for key in list(st.session_state.keys()):

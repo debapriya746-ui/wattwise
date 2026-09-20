@@ -1,2 +1,5 @@
 mcp
 streamlit
+fastapi
+uvicorn[standard]
+httpx
