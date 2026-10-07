@@ -3,3 +3,6 @@ streamlit
 fastapi
 uvicorn[standard]
 httpx
+python-dotenv
+google-adk
+litellm
