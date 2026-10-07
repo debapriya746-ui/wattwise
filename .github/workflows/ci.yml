@@ -28,9 +28,9 @@ jobs:
         run: |
           python tests/run_evals.py
 
-      - name: Run API tests
+      - name: Run API & guardrail tests
         run: |
-          pytest tests/test_api.py -q
+          pytest tests/ -q
 
   deploy:
     name: Build & Publish Images
