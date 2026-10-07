@@ -1,3 +1,13 @@
+---
+title: WattWise
+emoji: ⚡
+colorFrom: yellow
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # WattWise ⚡
 
 [![CI/CD Pipeline](https://github.com/debapriya746-ui/wattwise/actions/workflows/ci.yml/badge.svg)](https://github.com/debapriya746-ui/wattwise/actions/workflows/ci.yml)
