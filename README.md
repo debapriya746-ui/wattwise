@@ -1,4 +1,7 @@
 # WattWise ⚡
+
+[![CI/CD Pipeline](https://github.com/debapriya746-ui/wattwise/actions/workflows/ci.yml/badge.svg)](https://github.com/debapriya746-ui/wattwise/actions/workflows/ci.yml)
+
 An agentic electricity bill estimator that helps you understand, review, and reduce your household energy costs.
 
 ## Track
