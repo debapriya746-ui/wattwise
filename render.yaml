@@ -1,0 +1,15 @@
+# Render blueprint for the WattWise live demo.
+# One free web service built from the combined Dockerfile: it runs the FastAPI
+# backend internally and serves the Streamlit UI on Render's $PORT.
+services:
+  - type: web
+    name: wattwise
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      # The guided demo needs no LLM key, so skip loading the ADK chat agent.
+      - key: WATTWISE_ENABLE_ADK
+        value: "0"
+      - key: API_BASE_URL
+        value: http://localhost:8001

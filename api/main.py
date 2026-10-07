@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import uuid
 from typing import Optional
 
@@ -9,24 +10,30 @@ load_dotenv()
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
-from google.genai import types
 
 from agents import location_agent, weather_agent, tariff_agent, calculator_agent, advisor_agent, orchestrator
 from mcp_server import appliance_client
 from api.session_store import store
-from agents_adk.agent import root_agent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("api")
 
 app = FastAPI(title="WattWise API")
 
-# ---------- v2: ADK agent ----------
-ADK_APP_NAME = "wattwise"
-adk_session_service = InMemorySessionService()
-adk_runner = Runner(app_name=ADK_APP_NAME, agent=root_agent, session_service=adk_session_service)
+# ---------- v2: ADK agent (optional) ----------
+# Set WATTWISE_ENABLE_ADK=0 to skip loading google-adk + the chat agent. Useful
+# on a small free host where the guided pipeline is all the demo needs.
+ENABLE_ADK = os.getenv("WATTWISE_ENABLE_ADK", "1") == "1"
+
+if ENABLE_ADK:
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+    from google.genai import types
+    from agents_adk.agent import root_agent
+
+    ADK_APP_NAME = "wattwise"
+    adk_session_service = InMemorySessionService()
+    adk_runner = Runner(app_name=ADK_APP_NAME, agent=root_agent, session_service=adk_session_service)
 
 
 def _get_session(session_id: str) -> dict:
@@ -353,27 +360,27 @@ def feedback(session_id: str, body: FeedbackRequest):
 
 # ---------- v2: ADK conversational agent (Phase 2) ----------
 
-@app.post("/v2/sessions")
-async def create_adk_session():
-    session_id = uuid.uuid4().hex
-    await adk_session_service.create_session(app_name=ADK_APP_NAME, user_id=session_id, session_id=session_id)
-    return {"session_id": session_id}
+if ENABLE_ADK:
 
+    @app.post("/v2/sessions")
+    async def create_adk_session():
+        session_id = uuid.uuid4().hex
+        await adk_session_service.create_session(app_name=ADK_APP_NAME, user_id=session_id, session_id=session_id)
+        return {"session_id": session_id}
 
-class AdkMessageRequest(BaseModel):
-    text: str
+    class AdkMessageRequest(BaseModel):
+        text: str
 
+    @app.post("/v2/sessions/{session_id}/message")
+    async def send_adk_message(session_id: str, body: AdkMessageRequest):
+        session = await adk_session_service.get_session(app_name=ADK_APP_NAME, user_id=session_id, session_id=session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="ADK session not found")
 
-@app.post("/v2/sessions/{session_id}/message")
-async def send_adk_message(session_id: str, body: AdkMessageRequest):
-    session = await adk_session_service.get_session(app_name=ADK_APP_NAME, user_id=session_id, session_id=session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="ADK session not found")
+        message = types.Content(role="user", parts=[types.Part(text=body.text)])
+        reply_text = ""
+        async for event in adk_runner.run_async(user_id=session_id, session_id=session_id, new_message=message):
+            if event.is_final_response() and event.content and event.content.parts:
+                reply_text = "".join(p.text or "" for p in event.content.parts)
 
-    message = types.Content(role="user", parts=[types.Part(text=body.text)])
-    reply_text = ""
-    async for event in adk_runner.run_async(user_id=session_id, session_id=session_id, new_message=message):
-        if event.is_final_response() and event.content and event.content.parts:
-            reply_text = "".join(p.text or "" for p in event.content.parts)
-
-    return {"reply": reply_text}
+        return {"reply": reply_text}

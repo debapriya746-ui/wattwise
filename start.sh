@@ -11,7 +11,7 @@ sleep 5
 # Streamlit on the public Hugging Face port. Headless avoids the email prompt;
 # CORS/XSRF are relaxed because the Space serves the app behind a proxy.
 exec streamlit run app.py \
-  --server.port 7860 \
+  --server.port "${PORT:-7860}" \
   --server.address 0.0.0.0 \
   --server.headless true \
   --server.enableCORS false \
