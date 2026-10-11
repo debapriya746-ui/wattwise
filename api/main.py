@@ -425,10 +425,10 @@ if ENABLE_ADK:
                 friendly = (
                     "I'm being rate-limited by the free model tier (a few thousand "
                     "tokens per minute). Please wait about a minute and send your "
-                    "message again."
+                    "message again — or switch to the Guided Wizard for an "
+                    "accurate estimate with no rate limits."
                 )
-            else:
-                friendly = f"The assistant could not respond right now: {e}"
-            return {"reply": "", "error": friendly}
+                return {"reply": "", "error": friendly, "error_type": "rate_limit"}
+            return {"reply": "", "error": f"The assistant could not respond right now: {e}", "error_type": "other"}
 
         return {"reply": reply_text}

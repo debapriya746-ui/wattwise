@@ -227,6 +227,13 @@ def draw_progress_bar(step):
                 st.markdown(f"<div style='text-align:center; border-bottom:3.5px solid #edf2f7; color:#a0aec0; padding-bottom:6px; font-size:0.85rem;'>{s}</div>", unsafe_allow_html=True)
     st.write("")
 
+def _switch_to_wizard():
+    """on_click callback: jump to the Guided Wizard. Setting the radio's
+    session_state key in a callback is applied before the widget is rebuilt."""
+    st.session_state["app_mode"] = "🧭 Guided Wizard"
+    st.session_state["rate_limited"] = False
+
+
 def render_chat():
     """AI Assistant tab: a conversation driven by the single ADK agent (many
     tools) exposed at the backend's /v2 endpoints."""
@@ -271,6 +278,7 @@ def render_chat():
         st.session_state.chat_history.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
+        error_type = None
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:
@@ -282,10 +290,27 @@ def render_chat():
                         {"text": prompt, "client_ip": client_ip},
                     )
                     reply = res.get("reply") or res.get("error") or "(no response)"
+                    error_type = res.get("error_type")
                 except Exception as e:
                     reply = f"Sorry, something went wrong: {e}"
             st.markdown(reply)
         st.session_state.chat_history.append({"role": "assistant", "content": reply})
+        # Remember a rate-limit hit so the switch prompt persists on rerun;
+        # a later successful reply clears it.
+        st.session_state["rate_limited"] = (error_type == "rate_limit")
+
+    if st.session_state.get("rate_limited"):
+        st.warning(
+            "⚠️ You've hit the free AI model's rate limit (a few thousand tokens "
+            "per minute). You can wait a minute and try again — or switch to the "
+            "**Guided Wizard** for an accurate estimate with no rate limits."
+        )
+        st.button(
+            "🧭 Switch to Guided Wizard",
+            on_click=_switch_to_wizard,
+            use_container_width=True,
+            type="primary",
+        )
 
 
 # Initialize session state variables
@@ -329,17 +354,21 @@ st.markdown("<h2 style='text-align: center; margin-bottom: 0px;'>⚡ WattWise</h
 st.markdown("<p style='text-align: center; color: #718096; margin-bottom: 25px;'>Your personal electricity bill estimator</p>", unsafe_allow_html=True)
 
 # ----------------- Mode selector -----------------
+MODE_WIZARD = "🧭 Guided Wizard"
+MODE_CHAT = "💬 AI Assistant"
+
 with st.sidebar:
     st.markdown("### Mode")
     app_mode = st.radio(
         "How would you like to use WattWise?",
-        ["🧭 Guided Wizard", "💬 AI Assistant"],
+        [MODE_WIZARD, MODE_CHAT],
         label_visibility="collapsed",
+        key="app_mode",
     )
-    if app_mode == "💬 AI Assistant" and not CHAT_ENABLED:
+    if app_mode == MODE_CHAT and not CHAT_ENABLED:
         st.caption("AI Assistant needs a GROQ_API_KEY.")
 
-if app_mode == "💬 AI Assistant":
+if app_mode == MODE_CHAT:
     render_chat()
     st.stop()
 
