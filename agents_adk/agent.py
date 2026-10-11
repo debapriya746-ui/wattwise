@@ -47,6 +47,12 @@ appliance_mcp_toolset = McpToolset(
 # via the WATTWISE_MODEL env var / Streamlit secret.
 MODEL = os.environ.get("WATTWISE_MODEL", "groq/openai/gpt-oss-120b")
 
+# gpt-oss / qwen on Groq are reasoning models that otherwise emit their
+# chain-of-thought into the reply. Tell Groq to keep the reasoning out of the
+# response so the user only sees the final answer. (Groq-specific param, so
+# only send it for Groq models — a Gemini/other override would reject it.)
+_MODEL_KWARGS = {"reasoning_format": "hidden"} if MODEL.startswith("groq/") else {}
+
 INSTRUCTION = """You are the WattWise Assistant, a friendly electricity-bill estimator.
 
 Follow this order, one step at a time — do not skip ahead:
@@ -83,7 +89,7 @@ Hard rules, no exceptions:
 
 root_agent = LlmAgent(
     name="wattwise_assistant",
-    model=LiteLlm(model=MODEL),
+    model=LiteLlm(model=MODEL, **_MODEL_KWARGS),
     instruction=INSTRUCTION,
     tools=[
         detect_location_from_ip,
