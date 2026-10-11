@@ -55,6 +55,11 @@ graph TD
     MCPServer -.->|Wattage Lookup| User
 ```
 
+## Two ways to use it
+WattWise offers two modes, chosen from the sidebar:
+- **🧭 Guided Wizard** — the deterministic step-by-step flow (location → profile → usage → verify → estimate → tips). No API key needed.
+- **💬 AI Assistant** — a single conversational **LLM agent** (`agents_adk/agent.py`) that holds every lookup/calculation tool (location, weather, tariff, the appliance-wattage MCP server, calculator, saving-tips) and decides which to call based on the conversation. The safety rules (never calculate before you confirm; always a low/high range, never one exact number; never invent a wattage) are enforced in the tool code, not left to the model. Requires a Groq API key.
+
 ## How to Run
 First, install the required dependencies:
 ```powershell
@@ -65,6 +70,21 @@ Then, launch the Streamlit application:
 ```powershell
 python -m streamlit run app.py
 ```
+
+To enable the AI Assistant locally, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and add your free [Groq](https://console.groq.com) key.
+
+## Deploy (Streamlit Community Cloud — free, no Docker)
+The app runs as a single process: `app.py` boots the FastAPI backend in a background thread (`embedded_backend.py`), so there is nothing else to host.
+1. Push this repo to GitHub.
+2. At [share.streamlit.io](https://share.streamlit.io), create an app pointing at `app.py` on this branch.
+3. In the app's **Settings → Secrets**, add:
+   ```toml
+   GROQ_API_KEY = "your-groq-api-key-here"
+   ```
+   (Omit the key to ship the Guided Wizard only.)
+4. Deploy. The AI Assistant tab is live once the key is set.
+
+> The combined Docker image (`Dockerfile`) and Render blueprint (`render.yaml`) still work for a two-process deploy; set `WATTWISE_ENABLE_ADK=1` and provide `GROQ_API_KEY` there to enable the agent.
 
 ## Disclaimer
 > [!IMPORTANT]

@@ -36,6 +36,31 @@ st.set_page_config(
     layout="centered"
 )
 
+# ---- Backend bootstrap (single-process hosts e.g. Streamlit Cloud) ----
+# The AI Assistant needs a Groq API key. Read it from Streamlit secrets or the
+# environment; if present, the embedded backend loads the chat agent too.
+from embedded_backend import ensure_backend
+
+try:
+    _GROQ_KEY = st.secrets.get("GROQ_API_KEY")
+except Exception:
+    _GROQ_KEY = None
+_GROQ_KEY = _GROQ_KEY or os.environ.get("GROQ_API_KEY")
+CHAT_ENABLED = bool(_GROQ_KEY)
+
+_BACKEND_HOST, _BACKEND_PORT = "127.0.0.1", 8001
+
+
+@st.cache_resource
+def _boot_backend():
+    """Start (or detect) the FastAPI backend once per server process."""
+    return ensure_backend(API_BASE_URL, _BACKEND_HOST, _BACKEND_PORT, _GROQ_KEY)
+
+
+if not _boot_backend():
+    st.error("Backend did not start. Please reload the page in a moment.")
+    st.stop()
+
 # Custom styles for clean premium white aesthetic
 st.markdown("""
 <style>
@@ -187,6 +212,53 @@ def draw_progress_bar(step):
                 st.markdown(f"<div style='text-align:center; border-bottom:3.5px solid #edf2f7; color:#a0aec0; padding-bottom:6px; font-size:0.85rem;'>{s}</div>", unsafe_allow_html=True)
     st.write("")
 
+def render_chat():
+    """AI Assistant tab: a conversation driven by the single ADK agent (many
+    tools) exposed at the backend's /v2 endpoints."""
+    st.markdown("<div class='card-container'>", unsafe_allow_html=True)
+    st.markdown("<div class='card-title'>💬 AI Assistant</div>", unsafe_allow_html=True)
+    st.write("Chat naturally — tell me where you live and what appliances you use, and I'll estimate your bill and suggest savings.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    if not CHAT_ENABLED:
+        st.info(
+            "The AI Assistant needs a **Groq API key**. Add `GROQ_API_KEY` to your "
+            "Streamlit secrets (or environment) to enable it. The Guided Wizard "
+            "works without a key."
+        )
+        return
+
+    if "chat_session_id" not in st.session_state:
+        try:
+            st.session_state.chat_session_id = api_post("/v2/sessions")["session_id"]
+            st.session_state.chat_history = []
+        except Exception as e:
+            st.error(f"Could not start a chat session: {e}")
+            return
+
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    prompt = st.chat_input("Ask about your electricity bill…")
+    if prompt:
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking…"):
+                try:
+                    res = api_post(
+                        f"/v2/sessions/{st.session_state.chat_session_id}/message",
+                        {"text": prompt},
+                    )
+                    reply = res.get("reply") or res.get("error") or "(no response)"
+                except Exception as e:
+                    reply = f"Sorry, something went wrong: {e}"
+            st.markdown(reply)
+        st.session_state.chat_history.append({"role": "assistant", "content": reply})
+
+
 # Initialize session state variables
 if "session_id" not in st.session_state:
     st.session_state.session_id = api_post("/sessions")["session_id"]
@@ -226,6 +298,21 @@ sid = st.session_state.session_id
 # Header
 st.markdown("<h2 style='text-align: center; margin-bottom: 0px;'>⚡ WattWise</h2>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #718096; margin-bottom: 25px;'>Your personal electricity bill estimator</p>", unsafe_allow_html=True)
+
+# ----------------- Mode selector -----------------
+with st.sidebar:
+    st.markdown("### Mode")
+    app_mode = st.radio(
+        "How would you like to use WattWise?",
+        ["🧭 Guided Wizard", "💬 AI Assistant"],
+        label_visibility="collapsed",
+    )
+    if app_mode == "💬 AI Assistant" and not CHAT_ENABLED:
+        st.caption("AI Assistant needs a GROQ_API_KEY.")
+
+if app_mode == "💬 AI Assistant":
+    render_chat()
+    st.stop()
 
 # ----------------- STEP 1: Location Access -----------------
 if st.session_state.step == 1:

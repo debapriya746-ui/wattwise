@@ -4,5 +4,7 @@ fastapi
 uvicorn[standard]
 httpx
 python-dotenv
-google-adk
-litellm
+# Pinned to the 2.x ADK API the agent is built and tested against (LlmAgent,
+# LiteLlm, McpToolset, StdioConnectionParams, Runner). A 3.x bump may need changes.
+google-adk>=2.9,<3.0
+litellm>=1.100

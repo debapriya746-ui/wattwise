@@ -36,6 +36,13 @@ if ENABLE_ADK:
     adk_runner = Runner(app_name=ADK_APP_NAME, agent=root_agent, session_service=adk_session_service)
 
 
+@app.get("/health")
+def health():
+    """Liveness probe. Also tells a caller whether the chat agent is loaded,
+    which the Streamlit frontend uses to decide if the AI Assistant tab works."""
+    return {"status": "ok", "adk_enabled": ENABLE_ADK}
+
+
 def _get_session(session_id: str) -> dict:
     session = store.get(session_id)
     if session is None:
@@ -379,8 +386,15 @@ if ENABLE_ADK:
 
         message = types.Content(role="user", parts=[types.Part(text=body.text)])
         reply_text = ""
-        async for event in adk_runner.run_async(user_id=session_id, session_id=session_id, new_message=message):
-            if event.is_final_response() and event.content and event.content.parts:
-                reply_text = "".join(p.text or "" for p in event.content.parts)
+        try:
+            async for event in adk_runner.run_async(user_id=session_id, session_id=session_id, new_message=message):
+                if event.is_final_response() and event.content and event.content.parts:
+                    reply_text = "".join(p.text or "" for p in event.content.parts)
+        except Exception as e:
+            # A bad/missing API key, a rate limit, or a provider outage lands
+            # here. Surface a friendly message instead of a 500 so the chat UI
+            # can show it in the conversation.
+            logger.exception("ADK agent run failed")
+            return {"reply": "", "error": f"The assistant could not respond right now: {e}"}
 
         return {"reply": reply_text}
