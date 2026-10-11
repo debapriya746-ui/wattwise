@@ -41,9 +41,11 @@ appliance_mcp_toolset = McpToolset(
     ),
 )
 
-# Groq's OpenAI-compatible Llama models via LiteLLM. Override with any other
-# LiteLLM-supported model string (e.g. "gemini/gemini-2.5-flash") via env var.
-MODEL = os.environ.get("WATTWISE_MODEL", "groq/llama-3.3-70b-versatile")
+# Groq model via LiteLLM. gpt-oss-120b is a strong tool-calling model that is
+# broadly available on Groq accounts. Override with any other LiteLLM-supported
+# model string (e.g. "groq/openai/gpt-oss-20b" or "gemini/gemini-2.5-flash")
+# via the WATTWISE_MODEL env var / Streamlit secret.
+MODEL = os.environ.get("WATTWISE_MODEL", "groq/openai/gpt-oss-120b")
 
 INSTRUCTION = """You are the WattWise Assistant, a friendly electricity-bill estimator.
 
