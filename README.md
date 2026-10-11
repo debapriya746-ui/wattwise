@@ -14,7 +14,7 @@ pinned: false
 
 **An agentic electricity-bill estimator: a single LLM agent (Google ADK) that calls real tools — IP/pincode location, live weather, regional tariffs, an appliance-wattage database — to estimate and help reduce your household energy costs, with a deterministic guided wizard as a no-limit fallback.**
 
-🔗 **[Live demo](REPLACE_WITH_YOUR_STREAMLIT_URL)** · ▶️ **[Demo video](wattwise-app.mp4)** · 📊 **[Agent eval report](tests/agent_eval_report.md)**
+🔗 **[Live demo](https://wattwise-3lsuu34eyh3bwo4hgfvqrd.streamlit.app/)** · ▶️ **[Demo video](wattwise-app.mp4)** · 📊 **[Agent eval report](tests/agent_eval_report.md)**
 
 ### What this project demonstrates
 | Capability | Where |
