@@ -12,11 +12,18 @@ nothing, so the same app.py works in both setups.
 import os
 import threading
 import time
+import traceback
 
 import httpx
 
 _started = False
 _lock = threading.Lock()
+_startup_error: str | None = None  # traceback if the backend thread crashed
+
+
+def startup_error() -> str | None:
+    """The backend thread's crash traceback, if it died during startup."""
+    return _startup_error
 
 
 def _backend_ready(base_url: str, timeout: float = 1.0) -> bool:
@@ -27,24 +34,39 @@ def _backend_ready(base_url: str, timeout: float = 1.0) -> bool:
 
 
 def _serve(host: str, port: int):
-    import uvicorn
+    global _startup_error
+    try:
+        import uvicorn
 
-    # Imported here, not at module top, so the env vars ensure_backend() sets
-    # (WATTWISE_ENABLE_ADK, GROQ_API_KEY) are already in place when api.main —
-    # and, through it, the ADK agent — is first imported.
-    from api.main import app
+        # Imported here, not at module top, so the env vars ensure_backend()
+        # sets (WATTWISE_ENABLE_ADK, GROQ_API_KEY) are already in place when
+        # api.main — and, through it, the ADK agent — is first imported. This
+        # is also where a bad dependency / agent import blows up, so we capture
+        # it instead of letting the daemon thread die silently.
+        from api.main import app
 
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    # Signal handlers can only be installed on the main thread; we are not it.
-    server.install_signal_handlers = lambda: None
-    server.run()
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+            # Force the stdlib loop: uvloop (pulled by uvicorn[standard]) can
+            # misbehave when the server runs off the main thread.
+            loop="asyncio",
+        )
+        server = uvicorn.Server(config)
+        # Signal handlers can only be installed on the main thread; we are not it.
+        server.install_signal_handlers = lambda: None
+        server.run()
+    except Exception:
+        _startup_error = traceback.format_exc()
 
 
 def ensure_backend(base_url: str, host: str, port: int, groq_api_key: str | None = None) -> bool:
     """Guarantee a backend is reachable at base_url, starting one if needed.
 
-    Returns True once the backend answers /health, False if it never came up.
+    Returns True once the backend answers /health, False if it never came up
+    (check startup_error() for why).
     """
     global _started
 
@@ -63,8 +85,12 @@ def ensure_backend(base_url: str, host: str, port: int, groq_api_key: str | None
             threading.Thread(target=_serve, args=(host, port), daemon=True).start()
             _started = True
 
-    for _ in range(60):  # up to ~30s for first import (ADK is heavy)
+    # Up to ~90s: the first import of google-adk + litellm is slow on a cold
+    # free-tier CPU. Bail out early if the thread already recorded a crash.
+    for _ in range(180):
         if _backend_ready(base_url):
             return True
+        if _startup_error is not None:
+            return False
         time.sleep(0.5)
     return False

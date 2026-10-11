@@ -39,7 +39,7 @@ st.set_page_config(
 # ---- Backend bootstrap (single-process hosts e.g. Streamlit Cloud) ----
 # The AI Assistant needs a Groq API key. Read it from Streamlit secrets or the
 # environment; if present, the embedded backend loads the chat agent too.
-from embedded_backend import ensure_backend
+from embedded_backend import ensure_backend, startup_error
 
 try:
     _GROQ_KEY = st.secrets.get("GROQ_API_KEY")
@@ -58,7 +58,17 @@ def _boot_backend():
 
 
 if not _boot_backend():
-    st.error("Backend did not start. Please reload the page in a moment.")
+    err = startup_error()
+    if err:
+        st.error("The backend failed to start. Details below:")
+        st.code(err, language="text")
+        st.caption(
+            "If this mentions google-adk / litellm, the AI Assistant deps failed "
+            "to load. You can still ship the Guided Wizard by removing GROQ_API_KEY "
+            "from Secrets (which skips loading the agent)."
+        )
+    else:
+        st.error("Backend did not start in time. Please reload the page in a moment.")
     st.stop()
 
 # Custom styles for clean premium white aesthetic
@@ -226,6 +236,17 @@ def render_chat():
             "Streamlit secrets (or environment) to enable it. The Guided Wizard "
             "works without a key."
         )
+        return
+
+    # A key is set but the agent may still have failed to load (bad dep, etc.).
+    try:
+        health = api_get("/health")
+    except Exception:
+        health = {}
+    if not health.get("adk_enabled", False):
+        st.error("The AI Assistant could not be loaded on the server.")
+        if health.get("adk_error"):
+            st.code(health["adk_error"], language="text")
         return
 
     if "chat_session_id" not in st.session_state:

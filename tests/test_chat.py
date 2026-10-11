@@ -25,7 +25,10 @@ def test_health_reports_adk_disabled():
     client = TestClient(main.app)
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "adk_enabled": False}
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["adk_enabled"] is False
+    assert body["adk_error"] is None
 
 
 def test_chat_routes_absent_when_disabled():

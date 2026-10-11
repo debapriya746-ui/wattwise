@@ -24,23 +24,31 @@ app = FastAPI(title="WattWise API")
 # Set WATTWISE_ENABLE_ADK=0 to skip loading google-adk + the chat agent. Useful
 # on a small free host where the guided pipeline is all the demo needs.
 ENABLE_ADK = os.getenv("WATTWISE_ENABLE_ADK", "1") == "1"
+ADK_LOAD_ERROR = None  # set if the agent deps fail to import
 
 if ENABLE_ADK:
-    from google.adk.runners import Runner
-    from google.adk.sessions import InMemorySessionService
-    from google.genai import types
-    from agents_adk.agent import root_agent
+    try:
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.genai import types
+        from agents_adk.agent import root_agent
 
-    ADK_APP_NAME = "wattwise"
-    adk_session_service = InMemorySessionService()
-    adk_runner = Runner(app_name=ADK_APP_NAME, agent=root_agent, session_service=adk_session_service)
+        ADK_APP_NAME = "wattwise"
+        adk_session_service = InMemorySessionService()
+        adk_runner = Runner(app_name=ADK_APP_NAME, agent=root_agent, session_service=adk_session_service)
+    except Exception as e:
+        # A broken/missing agent dependency must not take down the guided
+        # wizard. Degrade to wizard-only and remember why.
+        logger.exception("Failed to load the ADK chat agent; disabling it")
+        ENABLE_ADK = False
+        ADK_LOAD_ERROR = f"{type(e).__name__}: {e}"
 
 
 @app.get("/health")
 def health():
     """Liveness probe. Also tells a caller whether the chat agent is loaded,
     which the Streamlit frontend uses to decide if the AI Assistant tab works."""
-    return {"status": "ok", "adk_enabled": ENABLE_ADK}
+    return {"status": "ok", "adk_enabled": ENABLE_ADK, "adk_error": ADK_LOAD_ERROR}
 
 
 def _get_session(session_id: str) -> dict:
