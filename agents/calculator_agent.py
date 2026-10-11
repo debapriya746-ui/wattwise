@@ -190,9 +190,12 @@ def calculate_bill(
         overall_conf = get_overall_confidence(usage_confidence, cost_confidence)
         margin = determine_margin(overall_conf)
         
-        low_bill = expected_bill * (1.0 - margin)
-        high_bill = expected_bill * (1.0 + margin)
+        # Apply the margin to the energy cost, then add the fixed charge to every
+        # figure so the range always brackets the expected bill
+        # (low <= total_expected <= high).
         total_expected = expected_bill + fixed_charge
+        low_bill = expected_bill * (1.0 - margin) + fixed_charge
+        high_bill = expected_bill * (1.0 + margin) + fixed_charge
         
         # 5. Slab alerts
         alert_res = check_slab_alert(total_monthly_kwh, slabs)
