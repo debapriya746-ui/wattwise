@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import time
 import uuid
 from typing import Optional
 
@@ -31,7 +32,7 @@ if ENABLE_ADK:
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
         from google.genai import types
-        from agents_adk.agent import root_agent
+        from agents_adk.agent import root_agent, MODEL
 
         ADK_APP_NAME = "wattwise"
         adk_session_service = InMemorySessionService()
@@ -391,6 +392,24 @@ if ENABLE_ADK:
     # it once rather than on every message.
     _ip_seeded: set = set()
 
+    # Lightweight in-process observability: one record per chat turn. Bounded so
+    # it can't grow without limit. Exposed via GET /metrics for a cost/latency
+    # view; resets on restart (fine for a demo).
+    TURN_METRICS: list = []
+    _METRICS_CAP = 500
+
+    def _record_turn(session_id, latency_ms, tools, tokens, model, status):
+        TURN_METRICS.append({
+            "session": session_id[:8],
+            "latency_ms": round(latency_ms),
+            "tools": tools,
+            "tool_count": len(tools),
+            "tokens": tokens,
+            "model": model,
+            "status": status,
+        })
+        del TURN_METRICS[:-_METRICS_CAP]
+
     @app.post("/v2/sessions/{session_id}/message")
     async def send_adk_message(session_id: str, body: AdkMessageRequest):
         session = await adk_session_service.get_session(app_name=ADK_APP_NAME, user_id=session_id, session_id=session_id)
@@ -411,8 +430,19 @@ if ENABLE_ADK:
 
         message = types.Content(role="user", parts=[types.Part(text=text)])
         reply_text = ""
+        tools_called: list = []
+        total_tokens = 0
+        started = time.perf_counter()
         try:
             async for event in adk_runner.run_async(user_id=session_id, session_id=session_id, new_message=message):
+                if event.content and event.content.parts:
+                    for p in event.content.parts:
+                        fc = getattr(p, "function_call", None)
+                        if fc:
+                            tools_called.append(fc.name)
+                usage = getattr(event, "usage_metadata", None)
+                if usage and getattr(usage, "total_token_count", None):
+                    total_tokens += usage.total_token_count
                 if event.is_final_response() and event.content and event.content.parts:
                     reply_text = "".join(p.text or "" for p in event.content.parts)
         except Exception as e:
@@ -420,8 +450,12 @@ if ENABLE_ADK:
             # here. Surface a friendly message instead of a 500 so the chat UI
             # can show it in the conversation.
             logger.exception("ADK agent run failed")
+            latency_ms = (time.perf_counter() - started) * 1000
             msg = str(e)
-            if "rate_limit" in msg.lower() or "RateLimit" in type(e).__name__:
+            is_rate = "rate_limit" in msg.lower() or "RateLimit" in type(e).__name__
+            _record_turn(session_id, latency_ms, tools_called, total_tokens, MODEL,
+                         "rate_limit" if is_rate else "error")
+            if is_rate:
                 friendly = (
                     "I'm being rate-limited by the free model tier (a few thousand "
                     "tokens per minute). Please wait about a minute and send your "
@@ -431,4 +465,36 @@ if ENABLE_ADK:
                 return {"reply": "", "error": friendly, "error_type": "rate_limit"}
             return {"reply": "", "error": f"The assistant could not respond right now: {e}", "error_type": "other"}
 
-        return {"reply": reply_text}
+        latency_ms = (time.perf_counter() - started) * 1000
+        _record_turn(session_id, latency_ms, tools_called, total_tokens, MODEL, "ok")
+        logger.info(f"turn session={session_id[:8]} latency_ms={latency_ms:.0f} "
+                    f"tools={tools_called} tokens={total_tokens}")
+        return {
+            "reply": reply_text,
+            "metrics": {"latency_ms": round(latency_ms), "tools": tools_called, "tokens": total_tokens},
+        }
+
+    @app.get("/metrics")
+    def metrics():
+        """Aggregate cost/latency observability for the chat agent."""
+        turns = TURN_METRICS
+        n = len(turns)
+        oks = [t for t in turns if t["status"] == "ok"]
+        lat = sorted(t["latency_ms"] for t in oks)
+        tok = [t["tokens"] for t in oks]
+        tool_hist: dict = {}
+        for t in turns:
+            for name in t["tools"]:
+                tool_hist[name] = tool_hist.get(name, 0) + 1
+        def pct(data, p):
+            return data[min(len(data) - 1, int(len(data) * p))] if data else 0
+        return {
+            "model": MODEL,
+            "total_turns": n,
+            "ok_turns": len(oks),
+            "rate_limited": sum(1 for t in turns if t["status"] == "rate_limit"),
+            "latency_ms": {"p50": pct(lat, 0.5), "p95": pct(lat, 0.95)},
+            "tokens": {"total": sum(tok), "avg_per_turn": round(sum(tok) / len(tok)) if tok else 0},
+            "tool_usage": dict(sorted(tool_hist.items(), key=lambda kv: -kv[1])),
+            "recent": turns[-10:],
+        }

@@ -25,6 +25,7 @@ pinned: false
 | Prompt-injection & out-of-scope resistance | [tests/agent_eval_cases.json](tests/agent_eval_cases.json) |
 | LLM-as-judge quality scoring | `run_agent_evals.py --judge` |
 | Custom MCP server | [mcp_server/appliance_db_server.py](mcp_server/appliance_db_server.py) |
+| Observability (latency / tokens / tool-usage) | `GET /metrics` + per-turn UI stats |
 | CI/CD + live deployment | [.github/workflows/ci.yml](.github/workflows/ci.yml), Streamlit Cloud |
 
 ## Track
@@ -36,7 +37,8 @@ pinned: false
 3. **Human-in-the-Loop Verification**: A strict verification gate prevents calculator execution until the user manually confirms or edits location, weather parameters, appliances, and rates.
 4. **Agent Skills**: Guided by custom Markdown skill specifications (`calculate-daily-usage`, `estimate-monthly-bill`, `saving-tips`, `code-reviewer`) with distinct trigger, margin, and validation rules.
 5. **CI/CD Integration**: Employs GitHub Actions pipeline (`ci.yml`) validating the project on every push using a 10-test-case validation suite (`run_evals.py`).
-6. **Agent Evaluation Harness**: A curated golden eval set (`tests/agent_eval_cases.json`) runs whole conversations through the live LLM agent and measures tool-selection accuracy, guardrail adherence (never calculate before confirmation; always a range), prompt-injection resistance, out-of-scope handling, and — optionally — response quality via an LLM-as-judge (`tests/run_agent_evals.py`).
+6. **Agent Evaluation Harness**: A curated golden eval set (`tests/agent_eval_cases.json`) runs whole conversations through the live LLM agent and measures tool-selection accuracy, guardrail adherence (never calculate before confirmation; always a range), prompt-injection resistance, out-of-scope handling, and — optionally — response quality via an LLM-as-judge (`tests/run_agent_evals.py`). Wired into CI as a non-blocking job that uploads the report.
+7. **Observability**: Every chat turn records latency, tool calls, and token count; the UI shows per-turn stats and the backend exposes aggregate p50/p95 latency, token cost, and a tool-usage histogram at `GET /metrics`.
 
 ## Architecture
 Two front-end modes share one deterministic backend. The **AI Assistant** lets a

@@ -291,9 +291,18 @@ def render_chat():
                     )
                     reply = res.get("reply") or res.get("error") or "(no response)"
                     error_type = res.get("error_type")
+                    metrics = res.get("metrics")
                 except Exception as e:
                     reply = f"Sorry, something went wrong: {e}"
+                    metrics = None
             st.markdown(reply)
+            if metrics:
+                tokens = metrics.get("tokens") or 0
+                st.caption(
+                    f"⏱ {metrics.get('latency_ms', 0)/1000:.1f}s · "
+                    f"🔧 {len(metrics.get('tools', []))} tool call(s) · "
+                    + (f"~{tokens} tokens" if tokens else "tokens n/a")
+                )
         st.session_state.chat_history.append({"role": "assistant", "content": reply})
         # Remember a rate-limit hit so the switch prompt persists on rerun;
         # a later successful reply clears it.
