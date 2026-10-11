@@ -1,3 +1,4 @@
+import ipaddress
 import json
 import logging
 import urllib.request
@@ -11,7 +12,20 @@ logging.basicConfig(
 )
 logger = logging.getLogger("location_agent")
 
-TIMEOUT_SECONDS = 2.0
+# Generous enough for a cold cloud host; IP lookups over the public internet
+# can take a couple of seconds on first use.
+TIMEOUT_SECONDS = 6.0
+
+
+def _is_public_ip(ip: str) -> bool:
+    """True only for a routable public IP. Private/loopback/reserved addresses
+    (what a proxy's x-forwarded-for often contains on cloud hosts) can't be
+    geolocated, so we skip them and fall back to server-side detection."""
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+        return not (addr.is_private or addr.is_loopback or addr.is_reserved or addr.is_link_local)
+    except ValueError:
+        return False
 
 def validate_pincode(pincode: str) -> bool:
     """
@@ -27,43 +41,63 @@ def validate_pincode(pincode: str) -> bool:
     logger.info(f"Decision: Validated pincode '{clean_pin}'. Valid={is_valid}")
     return is_valid
 
+def _query_geo(url: str) -> dict:
+    """Call one geolocation endpoint and normalize its fields. Returns a dict
+    with success + city/country/pincode, or success False."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "WattWise/1.0"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read().decode())
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
+        logger.warning(f"Decision: Geolocation lookup failed for {url}: {e}")
+        return {"success": False}
+
+    # ipwho.is uses success=True/False + postal; ip-api uses status="success"
+    # + zip. Treat an explicit failure flag as a miss.
+    if data.get("success") is False or data.get("status") == "fail":
+        logger.warning(f"Decision: Geolocation API reported failure: {data.get('message')}")
+        return {"success": False}
+
+    city = data.get("city")
+    country = data.get("country") or data.get("country_name")
+    pincode = data.get("postal") or data.get("zip")
+    # Privacy: never retain coordinates.
+    data.pop("latitude", None); data.pop("longitude", None)
+    data.pop("lat", None); data.pop("lon", None)
+
+    if city or country:
+        return {"success": True, "city": city, "country": country, "pincode": pincode}
+    return {"success": False}
+
+
 def auto_detect_location(client_ip: str = None) -> dict:
     """
-    Auto-detects location via public IP-API.
-    Uses client_ip if provided to support cloud deployments.
-    Discard coordinates immediately to enforce privacy.
+    Auto-detects location via a public IP geolocation API (HTTPS).
+    Uses client_ip only when it is a routable public address; otherwise falls
+    back to server-side detection. Coordinates are discarded for privacy.
     """
-    if client_ip:
-        logger.info(f"Decision: Attempting auto-detection for client IP '{client_ip}' via IP Geolocation API.")
-        url = f"http://ip-api.com/json/{client_ip}"
+    # Build the ordered list of endpoints to try. ipwho.is is HTTPS and free;
+    # ip-api is the HTTP fallback.
+    attempts = []
+    if client_ip and _is_public_ip(client_ip):
+        logger.info(f"Decision: Auto-detecting from public client IP '{client_ip}'.")
+        attempts.append(f"https://ipwho.is/{client_ip.strip()}")
+        attempts.append(f"http://ip-api.com/json/{client_ip.strip()}")
     else:
-        logger.info("Decision: Attempting auto-detection of location via server public IP.")
-        url = "http://ip-api.com/json/"
-    try:
-        with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
-            data = json.loads(response.read().decode())
-            if data.get("status") == "success":
-                city = data.get("city")
-                country = data.get("country")
-                pincode = data.get("zip")
-                
-                # Enforce privacy: explicitly discard latitude and longitude
-                lat = data.get("lat")
-                lon = data.get("lon")
-                logger.info(f"Decision: Location detected. Explicitly discarding coordinates lat={lat}, lon={lon} for privacy.")
-                
-                return {
-                    "success": True,
-                    "city": city,
-                    "country": country,
-                    "pincode": pincode
-                }
-            logger.warning("Decision: IP Geolocation API returned unsuccessful status.")
-    except urllib.error.URLError as e:
-        logger.error(f"Decision: Network error during auto-detection: {str(e)}")
-    except json.JSONDecodeError as e:
-        logger.error(f"Decision: JSON decode error during auto-detection: {str(e)}")
-    
+        if client_ip:
+            logger.info(f"Decision: Client IP '{client_ip}' is not public; using server-side detection.")
+        else:
+            logger.info("Decision: No client IP; using server-side detection.")
+        attempts.append("https://ipwho.is/")
+        attempts.append("http://ip-api.com/json/")
+
+    for url in attempts:
+        res = _query_geo(url)
+        if res.get("success"):
+            logger.info(f"Decision: Location detected via {url.split('/')[2]}: {res.get('city')}, {res.get('country')}")
+            return res
+
+    logger.warning("Decision: All geolocation attempts failed.")
     return {"success": False, "error": "Auto-detection failed"}
 
 def resolve_pincode_api(pincode: str) -> dict:
