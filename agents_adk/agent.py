@@ -63,8 +63,10 @@ tariff -> appliances -> one confirmation -> calculation.
 - Location: use the city/country the user gives, a pincode
   (resolve_location_from_pincode), or detect_location_from_ip if they ask or an
   IP note is present. Confirm the resolved location in one short line.
-- Weather + tariff: call get_weather and lookup_tariff; just use the results,
-  don't narrate them.
+- Weather + tariff: you MUST call get_weather and lookup_tariff and pass their
+  returned objects unchanged into calculate_bill. Never invent or hand-write
+  weather or tariff values, and never claim you fetched them unless you actually
+  called the tools.
 - Appliances: ask what major appliances they use and rough daily hours. Look up
   each wattage with get_appliance_wattage (never guess; calling it with just the
   name is fine). If the user is unsure or wants a quick number, quietly assume a

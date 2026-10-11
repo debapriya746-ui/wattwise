@@ -127,8 +127,10 @@ def determine_margin(confidence: str) -> float:
 def get_overall_confidence(usage_conf: str, cost_conf: str) -> str:
     """Resolves overall confidence based on usage and cost confidence levels."""
     levels = {"high": 3, "medium": 2, "low": 1}
-    u_val = levels.get(usage_conf.lower(), 1)
-    c_val = levels.get(cost_conf.lower(), 1)
+    # Be type-safe: the ADK agent sometimes supplies a numeric or non-string
+    # confidence; coerce to str so a bad value degrades to "low" instead of crashing.
+    u_val = levels.get(str(usage_conf).lower(), 1)
+    c_val = levels.get(str(cost_conf).lower(), 1)
     
     min_val = min(u_val, c_val)
     if min_val == 3:
