@@ -1,6 +1,11 @@
 import streamlit as st
 import os
 import httpx
+from dotenv import load_dotenv
+
+# Load a local .env (GROQ_API_KEY, etc.) when running on your own machine.
+# On Streamlit Cloud there is no .env — the key comes from the Secrets box.
+load_dotenv()
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8001")
 
