@@ -12,49 +12,66 @@ pinned: false
 
 [![CI/CD Pipeline](https://github.com/debapriya746-ui/wattwise/actions/workflows/ci.yml/badge.svg)](https://github.com/debapriya746-ui/wattwise/actions/workflows/ci.yml)
 
-An agentic electricity bill estimator that helps you understand, review, and reduce your household energy costs.
+**An agentic electricity-bill estimator: a single LLM agent (Google ADK) that calls real tools — IP/pincode location, live weather, regional tariffs, an appliance-wattage database — to estimate and help reduce your household energy costs, with a deterministic guided wizard as a no-limit fallback.**
+
+🔗 **[Live demo](REPLACE_WITH_YOUR_STREAMLIT_URL)** · ▶️ **[Demo video](wattwise-app.mp4)** · 📊 **[Agent eval report](tests/agent_eval_report.md)**
+
+### What this project demonstrates
+| Capability | Where |
+|---|---|
+| Agentic system, tool-calling, function orchestration | [agents_adk/agent.py](agents_adk/agent.py) — 1 agent, 7 tools |
+| **Agent evaluation harness** (tool-selection + guardrail scoring) | [tests/run_agent_evals.py](tests/run_agent_evals.py) |
+| Guardrails enforced in code (not prompts) | [agents_adk/tools.py](agents_adk/tools.py) `calculate_bill` |
+| Prompt-injection & out-of-scope resistance | [tests/agent_eval_cases.json](tests/agent_eval_cases.json) |
+| LLM-as-judge quality scoring | `run_agent_evals.py --judge` |
+| Custom MCP server | [mcp_server/appliance_db_server.py](mcp_server/appliance_db_server.py) |
+| CI/CD + live deployment | [.github/workflows/ci.yml](.github/workflows/ci.yml), Streamlit Cloud |
 
 ## Track
 **Concierge Agents**
 
 ## Course Concepts Demonstrated
-1. **Multi-Agent Coordination (GCP ADK / Python)**: Powered by an orchestrator coordinating 6 distinct, single-purpose agents (Location, Weather, Tariff, Verification, Calculator, and Advisor).
+1. **Agentic tool-calling (Google ADK / Python)**: A single `LlmAgent` holds every tool (location, weather, tariff, appliance-wattage, calculator, saving-tips) and decides which to call from the conversation. The same six single-purpose modules (Location, Weather, Tariff, Verification, Calculator, Advisor) also drive the deterministic Guided Wizard.
 2. **Custom Model Context Protocol (MCP) Server**: Integrates a custom Python-based MCP server (`appliance-db-server`) executing wattage lookups with calculated low/high margins.
 3. **Human-in-the-Loop Verification**: A strict verification gate prevents calculator execution until the user manually confirms or edits location, weather parameters, appliances, and rates.
 4. **Agent Skills**: Guided by custom Markdown skill specifications (`calculate-daily-usage`, `estimate-monthly-bill`, `saving-tips`, `code-reviewer`) with distinct trigger, margin, and validation rules.
 5. **CI/CD Integration**: Employs GitHub Actions pipeline (`ci.yml`) validating the project on every push using a 10-test-case validation suite (`run_evals.py`).
 6. **Agent Evaluation Harness**: A curated golden eval set (`tests/agent_eval_cases.json`) runs whole conversations through the live LLM agent and measures tool-selection accuracy, guardrail adherence (never calculate before confirmation; always a range), prompt-injection resistance, out-of-scope handling, and — optionally — response quality via an LLM-as-judge (`tests/run_agent_evals.py`).
 
-## Architecture Flow Diagram
+## Architecture
+Two front-end modes share one deterministic backend. The **AI Assistant** lets a
+single LLM agent decide which tools to call; the **Guided Wizard** drives the same
+tools through a fixed, no-LLM flow (the reliable fallback when the model is rate-limited).
+
 ```mermaid
 graph TD
-    User([User Input]) --> LocationAgent[1. Location Agent]
-    LocationAgent -->|City/Country/Pincode| WeatherAgent[2. Weather Agent]
-    WeatherAgent -->|CDD/HDD Metrics| TariffAgent[3. Tariff Agent]
-    TariffAgent -->|Regional Rates & Slabs| Verification{4. Verification Screen}
-    
-    Verification -->|Edit Inputs| User
-    Verification -->|Confirm & Verify| CalculatorAgent[5. Calculator Agent]
-    
-    CalculatorAgent -->|Usage & Cost Ranges| AdvisorAgent[6. Advisor Agent]
-    AdvisorAgent -->|Personalized Savings Tips| User
-    
-    subgraph Custom Skills
-        Skill1[calculate-daily-usage]
-        Skill2[estimate-monthly-bill]
-        Skill3[saving-tips]
+    UI["Streamlit UI (app.py)"]
+    UI -->|💬 AI Assistant| Agent
+    UI -->|🧭 Guided Wizard| Wizard["Deterministic pipeline (FastAPI /v1)"]
+
+    subgraph LLM["AI Assistant — single ADK agent"]
+        Agent["LlmAgent (Groq / LiteLLM)<br/>decides which tool to call"]
     end
-    
-    subgraph Database Server
-        MCPServer[(appliance_db_server MCP)]
+
+    Agent --> Tools
+    Wizard --> Tools
+
+    subgraph Tools["Shared tools / business logic"]
+        Loc["location (IP + pincode)"]
+        Wx["weather (Open-Meteo)"]
+        Tar["tariff lookup"]
+        Watt["appliance wattage DB"]
+        Calc["calculate_bill<br/>⛔ guardrails in code"]
+        Adv["saving tips"]
     end
-    
-    CalculatorAgent -.-> Skill1
-    CalculatorAgent -.-> Skill2
-    AdvisorAgent -.-> Skill3
-    User -.->|Add Appliances| MCPServer
-    MCPServer -.->|Wattage Lookup| User
+
+    Calc -->|low / expected / high range| UI
+    Adv -->|personalized tips| UI
 ```
+
+> **Reliability by design:** the safety rules (never calculate before the user
+> confirms, always a low/high range, never invent a wattage) live in the tool
+> code, so they hold even if the model misbehaves.
 
 ## Two ways to use it
 WattWise offers two modes, chosen from the sidebar:
@@ -116,6 +133,32 @@ The app runs as a single process: `app.py` boots the FastAPI backend in a backgr
 4. Deploy. The AI Assistant tab is live once the key is set.
 
 > The combined Docker image (`Dockerfile`) and Render blueprint (`render.yaml`) still work for a two-process deploy; set `WATTWISE_ENABLE_ADK=1` and provide `GROQ_API_KEY` there to enable the agent.
+
+## Engineering Decisions & Trade-offs
+A few deliberate choices, and why:
+
+- **Single agent with many tools, not a multi-agent swarm.** The flow is a linear
+  pipeline with no parallel work, so one agent holding all tools avoids the
+  state-handoff bugs of passing data between separate agents — simpler *and* more
+  reliable. (The repo also keeps a deterministic multi-step pipeline for the wizard.)
+- **Guardrails in code, not in the prompt.** `calculate_bill` physically refuses
+  to run before `assumptions_confirmed=True`, so the "never calculate before the
+  user confirms" rule holds even if the model is jailbroken. The eval harness
+  tests this adversarially.
+- **In-process tools instead of a live MCP subprocess (for deployment).** The MCP
+  stdio subprocess dropped its connection inside a single-process cloud host,
+  which made its tool vanish from the request and caused "tool not in
+  request.tools" errors. The same database now runs in-process as a function tool;
+  the MCP server still exists for standalone use.
+- **Free-tier token economics.** Switched to `gpt-oss-20b` with hidden, low-effort
+  reasoning and a tightened system prompt — roughly halving per-turn tokens — to
+  live within Groq's ~8k tokens/min. When the limit is hit, the UI steers users to
+  the no-limit Guided Wizard.
+- **The wizard stays deterministic on purpose.** Routing it through the LLM would
+  add latency, cost, and rate limits for zero accuracy gain (the math is identical),
+  so it remains the dependable fallback.
+- **Honest evals.** The harness distinguishes genuine failures from free-tier
+  throttling, so the report doesn't overstate reliability.
 
 ## Disclaimer
 > [!IMPORTANT]
