@@ -7,38 +7,28 @@ strict sequential pipeline with no parallel work and no step needing distinct
 expertise, so one shared conversation avoids the state-handoff bugs that come
 from passing data between separate agents on every turn.
 
-The appliance-wattage lookup is the project's real custom MCP server
-(mcp_server/appliance_db_server.py), wired in via ADK's McpToolset so the
-connection is held open for the agent's lifetime instead of the old
-appliance_client.py pattern, which spawned a fresh subprocess per call.
+The appliance-wattage lookup reuses the project's appliance database
+(mcp_server/appliance_db_server.py) but is called in-process as a normal
+function tool (agents_adk/tools.get_appliance_wattage). The stdio MCP subprocess
+was unreliable inside a single-process cloud host (Streamlit Cloud): when its
+connection dropped, the tool disappeared from the request the model saw, yet the
+instruction still told the model to call it, producing Groq "tool not in
+request.tools" errors. The same database still runs as a standalone MCP server
+for anyone connecting over stdio; the agent just no longer depends on spawning it.
 """
 import os
-import sys
 
-from mcp import StdioServerParameters
 from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
-from google.adk.tools.mcp_tool.mcp_toolset import McpToolset
-from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
 
 from agents_adk.tools import (
     detect_location_from_ip,
     resolve_location_from_pincode,
     get_weather,
     lookup_tariff,
+    get_appliance_wattage,
     calculate_bill,
     generate_saving_tips,
-)
-
-APPLIANCE_MCP_SERVER = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "mcp_server", "appliance_db_server.py")
-)
-
-appliance_mcp_toolset = McpToolset(
-    connection_params=StdioConnectionParams(
-        server_params=StdioServerParameters(command=sys.executable, args=[APPLIANCE_MCP_SERVER]),
-        timeout=10.0,
-    ),
 )
 
 # Groq model via LiteLLM. gpt-oss-20b is a capable tool-calling model with a
@@ -121,7 +111,7 @@ root_agent = LlmAgent(
         resolve_location_from_pincode,
         get_weather,
         lookup_tariff,
-        appliance_mcp_toolset,
+        get_appliance_wattage,
         calculate_bill,
         generate_saving_tips,
     ],

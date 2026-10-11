@@ -17,6 +17,37 @@ enforced there, in code, not by trusting the LLM to behave.
 import json
 
 from agents import location_agent, weather_agent, tariff_agent, calculator_agent, advisor_agent
+from mcp_server.appliance_db_server import get_appliance_wattage as _db_get_appliance_wattage
+
+
+def get_appliance_wattage(appliance: str, size: str = "", star_rating: int = 0, age: str = "") -> dict:
+    """Looks up a typical wattage for an appliance from the WattWise appliance
+    database, with low/high margins. Call this for every appliance instead of
+    guessing a wattage. Passing just the appliance name is fine — it returns a
+    sensible typical value when the details are unknown.
+
+    Args:
+        appliance: Appliance name, e.g. "AC", "refrigerator", "TV", "fan".
+        size: Optional size/tonnage/capacity/type (e.g. "1.5 ton", "medium",
+            "43 inch", "ceiling", "LED"). Leave empty if unknown.
+        star_rating: Optional energy star rating 1-5. Use 0 if unknown.
+        age: Optional age band ("less than 3 years", "3-5 years",
+            "more than 5 years") or load type. Leave empty if unknown.
+
+    Returns:
+        A dict with watts_expected, watts_low, watts_high, and source.
+    """
+    # Reuses the exact database logic from the project's MCP server, but called
+    # in-process so the tool is always available to the agent (the stdio MCP
+    # subprocess is unreliable inside a single-process cloud host).
+    return json.loads(
+        _db_get_appliance_wattage(
+            appliance,
+            size or None,
+            star_rating or None,
+            age or None,
+        )
+    )
 
 
 def detect_location_from_ip(client_ip: str) -> dict:
