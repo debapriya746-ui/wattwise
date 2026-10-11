@@ -1,4 +1,6 @@
-mcp
+# mcp 2.x renamed FastMCP and broke the v1 server API; google-adk also requires
+# <2, so pin to the v1 line the appliance DB server is written against.
+mcp>=1.24,<2
 streamlit
 fastapi
 uvicorn[standard]

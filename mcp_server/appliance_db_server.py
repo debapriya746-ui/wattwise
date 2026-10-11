@@ -1,7 +1,6 @@
 import json
 import logging
 import sys
-from mcp.server.fastmcp import FastMCP
 
 # Setup logger
 logging.basicConfig(
@@ -10,8 +9,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stderr)]
 )
 logger = logging.getLogger("appliance_db_server")
-
-mcp = FastMCP("appliance_db_server")
 
 # Reference database of appliance options and wattages
 APPLIANCE_DB = {
@@ -153,7 +150,6 @@ APPLIANCE_KEYS_MAP = {
     "iron": "Iron"
 }
 
-@mcp.tool()
 def get_appliance_wattage(
     appliance: str,
     size: str = None,
@@ -360,7 +356,6 @@ def get_appliance_wattage(
         }
         return json.dumps(fallback_res, indent=2)
 
-@mcp.tool()
 def list_appliance_options(appliance: str) -> str:
     """
     List the available configuration options (e.g. sizes, ratings, types) for a given appliance.
@@ -448,5 +443,18 @@ def list_appliance_options(appliance: str) -> str:
         }
         return json.dumps(fallback_res, indent=2)
 
+# --- MCP server registration (optional) ---
+# The wattage functions above are plain Python so they can be called in-process
+# by the agent without needing the MCP framework. Running this file as a
+# standalone MCP server (stdio) additionally requires mcp v1's FastMCP; if that
+# isn't available, in-process use still works and only server mode is disabled.
+def _build_mcp_server():
+    from mcp.server.fastmcp import FastMCP  # mcp v1 API
+    server = FastMCP("appliance_db_server")
+    server.tool()(get_appliance_wattage)
+    server.tool()(list_appliance_options)
+    return server
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    _build_mcp_server().run(transport="stdio")
