@@ -385,6 +385,11 @@ if ENABLE_ADK:
 
     class AdkMessageRequest(BaseModel):
         text: str
+        client_ip: Optional[str] = None
+
+    # Sessions whose client IP has already been given to the agent, so we seed
+    # it once rather than on every message.
+    _ip_seeded: set = set()
 
     @app.post("/v2/sessions/{session_id}/message")
     async def send_adk_message(session_id: str, body: AdkMessageRequest):
@@ -392,7 +397,19 @@ if ENABLE_ADK:
         if session is None:
             raise HTTPException(status_code=404, detail="ADK session not found")
 
-        message = types.Content(role="user", parts=[types.Part(text=body.text)])
+        text = body.text
+        if body.client_ip and session_id not in _ip_seeded:
+            # Give the agent the real IP so detect_location_from_ip can work if
+            # the user asks to auto-detect. The model never sees this unless it
+            # chooses to act on it; the user's own text follows.
+            text = (
+                f"[system note: the user's IP address is {body.client_ip}; "
+                f"if they ask to detect or auto-find their location, call "
+                f"detect_location_from_ip with this IP]\n\n{body.text}"
+            )
+            _ip_seeded.add(session_id)
+
+        message = types.Content(role="user", parts=[types.Part(text=text)])
         reply_text = ""
         try:
             async for event in adk_runner.run_async(user_id=session_id, session_id=session_id, new_message=message):
@@ -403,6 +420,15 @@ if ENABLE_ADK:
             # here. Surface a friendly message instead of a 500 so the chat UI
             # can show it in the conversation.
             logger.exception("ADK agent run failed")
-            return {"reply": "", "error": f"The assistant could not respond right now: {e}"}
+            msg = str(e)
+            if "rate_limit" in msg.lower() or "RateLimit" in type(e).__name__:
+                friendly = (
+                    "I'm being rate-limited by the free model tier (a few thousand "
+                    "tokens per minute). Please wait about a minute and send your "
+                    "message again."
+                )
+            else:
+                friendly = f"The assistant could not respond right now: {e}"
+            return {"reply": "", "error": friendly}
 
         return {"reply": reply_text}

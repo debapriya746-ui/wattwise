@@ -274,9 +274,12 @@ def render_chat():
         with st.chat_message("assistant"):
             with st.spinner("Thinking…"):
                 try:
+                    client_ip = st.context.headers.get("x-forwarded-for")
+                    if client_ip:
+                        client_ip = client_ip.split(",")[0].strip()
                     res = api_post(
                         f"/v2/sessions/{st.session_state.chat_session_id}/message",
-                        {"text": prompt},
+                        {"text": prompt, "client_ip": client_ip},
                     )
                     reply = res.get("reply") or res.get("error") or "(no response)"
                 except Exception as e:
